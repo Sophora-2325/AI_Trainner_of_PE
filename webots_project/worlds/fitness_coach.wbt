@@ -1,0 +1,302 @@
+#VRML_SIM R2023b utf8
+# AI 健身教练 — Webots 世界文件
+# 人体骨骼模型可视化 + 标准动作回放
+
+WorldInfo {
+  info [
+    "AI Fitness Coach — Webots Human Skeleton Visualization"
+    "用于展示用户动作与标准动作的3D对比"
+  ]
+  title "AI Fitness Coach"
+  basicTimeStep 16
+}
+
+Viewpoint {
+  orientation 0.27 -0.66 0.70 2.18
+  position 3.5 1.5 3.0
+  follow "skeleton"
+  followType "Tracking Shot"
+}
+
+TexturedBackground {
+}
+
+TexturedBackgroundLight {
+}
+
+# 地面
+Solid {
+  translation 0 0 0
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.3 0.3 0.3
+        roughness 0.8
+      }
+      geometry Box {
+        size 10 0.01 10
+      }
+    }
+  ]
+  name "ground"
+  boundingObject Box {
+    size 10 0.01 10
+  }
+}
+
+# 光照
+DirectionalLight {
+  direction -0.5 -1 -0.5
+  intensity 0.8
+}
+
+DirectionalLight {
+  direction 0.5 0 -0.5
+  intensity 0.4
+}
+
+# ═══ 人体骨骼模型 ═══
+# 使用自定义 HumanSkeleton PROTO
+# 如果 HumanSkeleton.proto 已生成，取消下行注释：
+# HumanSkeleton {
+#   translation 0 0.92 0
+#   controller "skeleton_controller"
+#   name "skeleton"
+# }
+
+# 简易骨骼展示（使用Capsule搭建的15段人体模型，作为base reference）
+Robot {
+  translation 0 0.92 0
+  name "skeleton"
+  controller "skeleton_controller"
+
+  children [
+    # 骨盆 (Root)
+    Solid {
+      children [
+        Shape {
+          appearance PBRAppearance { baseColor 0.8 0.8 0.85 }
+          geometry Capsule { height 0.18 radius 0.11 }
+        }
+
+        # 躯干 (脊柱)
+        HingeJoint {
+          jointParameters HingeJointParameters { axis 1 0 0 }
+          device [ RotationalMotor { name "spine_motor" maxTorque 100 } ]
+          endPoint Solid {
+            translation 0 0.12 0
+            children [
+              Shape {
+                appearance PBRAppearance { baseColor 0.6 0.6 0.7 }
+                geometry Capsule { height 0.45 radius 0.09 }
+              }
+
+              # 头部
+              HingeJoint {
+                jointParameters HingeJointParameters { axis 1 0 0 }
+                device [ RotationalMotor { name "neck_motor" maxTorque 10 } ]
+                endPoint Solid {
+                  translation 0 0.26 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance { baseColor 0.85 0.75 0.6 }
+                      geometry Sphere { radius 0.09 }
+                    }
+                  ]
+                }
+              }
+
+              # 右上肢
+              HingeJoint {
+                jointParameters HingeJointParameters { axis 0 0 1 }
+                device [ RotationalMotor { name "shoulder_flex_r_motor" maxTorque 50 } ]
+                endPoint Solid {
+                  translation 0.08 0.16 -0.08
+                  children [
+                    HingeJoint {
+                      jointParameters HingeJointParameters { axis 0 1 0 }
+                      device [ RotationalMotor { name "shoulder_abd_r_motor" maxTorque 50 } ]
+                      endPoint Solid {
+                        children [
+                          Shape {
+                            appearance PBRAppearance { baseColor 0.7 0.5 0.3 }
+                            geometry Capsule { height 0.28 radius 0.04 }
+                          }
+                          HingeJoint {
+                            jointParameters HingeJointParameters { axis 1 0 0 }
+                            device [ RotationalMotor { name "elbow_r_motor" maxTorque 30 } ]
+                            endPoint Solid {
+                              translation 0 -0.17 0
+                              children [
+                                Shape {
+                                  appearance PBRAppearance { baseColor 0.7 0.5 0.3 }
+                                  geometry Capsule { height 0.24 radius 0.035 }
+                                }
+                                Solid {
+                                  translation 0 -0.14 0
+                                  children [
+                                    Shape {
+                                      appearance PBRAppearance { baseColor 0.8 0.7 0.5 }
+                                      geometry Box { size 0.06 0.09 0.03 }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+
+              # 左上肢
+              HingeJoint {
+                jointParameters HingeJointParameters { axis 0 0 1 }
+                device [ RotationalMotor { name "shoulder_flex_l_motor" maxTorque 50 } ]
+                endPoint Solid {
+                  translation -0.08 0.16 0.08
+                  children [
+                    HingeJoint {
+                      jointParameters HingeJointParameters { axis 0 1 0 }
+                      device [ RotationalMotor { name "shoulder_abd_l_motor" maxTorque 50 } ]
+                      endPoint Solid {
+                        children [
+                          Shape {
+                            appearance PBRAppearance { baseColor 0.7 0.5 0.3 }
+                            geometry Capsule { height 0.28 radius 0.04 }
+                          }
+                          HingeJoint {
+                            jointParameters HingeJointParameters { axis 1 0 0 }
+                            device [ RotationalMotor { name "elbow_l_motor" maxTorque 30 } ]
+                            endPoint Solid {
+                              translation 0 -0.17 0
+                              children [
+                                Shape {
+                                  appearance PBRAppearance { baseColor 0.7 0.5 0.3 }
+                                  geometry Capsule { height 0.24 radius 0.035 }
+                                }
+                                Solid {
+                                  translation 0 -0.14 0
+                                  children [
+                                    Shape {
+                                      appearance PBRAppearance { baseColor 0.8 0.7 0.5 }
+                                      geometry Box { size 0.06 0.09 0.03 }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+
+        # 右下肢
+        HingeJoint {
+          jointParameters HingeJointParameters { axis 1 0 0 }
+          device [ RotationalMotor { name "hip_flexion_r_motor" maxTorque 100 } ]
+          endPoint Solid {
+            translation 0.09 -0.05 -0.05
+            children [
+              HingeJoint {
+                jointParameters HingeJointParameters { axis 0 0 1 }
+                device [ RotationalMotor { name "hip_abd_r_motor" maxTorque 50 } ]
+                endPoint Solid {
+                  children [
+                    Shape {
+                      appearance PBRAppearance { baseColor 0.7 0.5 0.3 }
+                      geometry Capsule { height 0.40 radius 0.055 }
+                    }
+                    HingeJoint {
+                      jointParameters HingeJointParameters { axis 1 0 0 }
+                      device [ RotationalMotor { name "knee_r_motor" maxTorque 80 } ]
+                      endPoint Solid {
+                        translation 0 -0.23 0
+                        children [
+                          Shape {
+                            appearance PBRAppearance { baseColor 0.7 0.5 0.3 }
+                            geometry Capsule { height 0.36 radius 0.045 }
+                          }
+                          HingeJoint {
+                            jointParameters HingeJointParameters { axis 1 0 0 }
+                            device [ RotationalMotor { name "ankle_r_motor" maxTorque 30 } ]
+                            endPoint Solid {
+                              translation 0 -0.21 0
+                              children [
+                                Shape {
+                                  appearance PBRAppearance { baseColor 0.8 0.7 0.5 }
+                                  geometry Box { size 0.05 0.07 0.20 }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+
+        # 左下肢
+        HingeJoint {
+          jointParameters HingeJointParameters { axis 1 0 0 }
+          device [ RotationalMotor { name "hip_flexion_l_motor" maxTorque 100 } ]
+          endPoint Solid {
+            translation -0.09 -0.05 0.05
+            children [
+              HingeJoint {
+                jointParameters HingeJointParameters { axis 0 0 1 }
+                device [ RotationalMotor { name "hip_abd_l_motor" maxTorque 50 } ]
+                endPoint Solid {
+                  children [
+                    Shape {
+                      appearance PBRAppearance { baseColor 0.7 0.5 0.3 }
+                      geometry Capsule { height 0.40 radius 0.055 }
+                    }
+                    HingeJoint {
+                      jointParameters HingeJointParameters { axis 1 0 0 }
+                      device [ RotationalMotor { name "knee_l_motor" maxTorque 80 } ]
+                      endPoint Solid {
+                        translation 0 -0.23 0
+                        children [
+                          Shape {
+                            appearance PBRAppearance { baseColor 0.7 0.5 0.3 }
+                            geometry Capsule { height 0.36 radius 0.045 }
+                          }
+                          HingeJoint {
+                            jointParameters HingeJointParameters { axis 1 0 0 }
+                            device [ RotationalMotor { name "ankle_l_motor" maxTorque 30 } ]
+                            endPoint Solid {
+                              translation 0 -0.21 0
+                              children [
+                                Shape {
+                                  appearance PBRAppearance { baseColor 0.8 0.7 0.5 }
+                                  geometry Box { size 0.05 0.07 0.20 }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

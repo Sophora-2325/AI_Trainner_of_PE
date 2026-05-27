@@ -1,0 +1,50 @@
+# 模型训练配置
+
+data:
+  window_size: 30              # 滑动窗口帧数
+  stride: 5                    # 窗口步长
+  input_dim: 99                # 33 keypoints × 3 coordinates
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+
+# 动作阶段分类器
+phase_classifier:
+  type: "tcn"                  # TCN / LSTM / Transformer
+  num_phases: 5                # SETUP, DESCENT, BOTTOM, ASCENT, LOCKOUT
+  hidden_dim: 128
+  num_layers: 4
+  kernel_size: 3
+  dropout: 0.2
+
+# 错误检测模型
+error_detector:
+  type: "lstm_attn"            # LSTM + Multi-Head Attention
+  hidden_dim: 256
+  num_layers: 2
+  num_heads: 8
+  dropout: 0.3
+
+# 质量评分模型
+quality_scorer:
+  type: "siamese"
+  embedding_dim: 128
+  hidden_dim: 256
+  num_layers: 2
+
+training:
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  epochs: 100
+  early_stopping_patience: 15
+  device: "cuda"
+  num_workers: 4
+
+# 数据增强
+augmentation:
+  enabled: true
+  noise_std: 0.01              # 高斯噪声标准差
+  time_warp: true              # 时间扭曲
+  scale_jitter: [0.9, 1.1]     # 缩放抖动范围
+  missing_joints_p: 0.05       # 随机遮挡关键点概率

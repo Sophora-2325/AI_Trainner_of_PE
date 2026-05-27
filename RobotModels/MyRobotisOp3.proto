@@ -1,0 +1,10 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/released/projects/robots/robotis/darwin-op/protos/RobotisOp3.proto"
+
+PROTO MyRobotisOp3 [
+]
+{
+  RobotisOp3 {
+  }
+}

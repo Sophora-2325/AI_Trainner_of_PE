@@ -1,0 +1,217 @@
+# 标准健身动作定义库
+# 每个动作定义：阶段划分、关键关节、ROM范围、常见错误模式
+
+squat:
+  name: "深蹲"
+  name_en: "Squat"
+  phases:
+    - SETUP        # 准备姿势
+    - DESCENT      # 下蹲
+    - BOTTOM       # 底部
+    - ASCENT       # 起身
+    - LOCKOUT      # 锁定
+  key_joints:
+    - hip_flexion_r
+    - hip_flexion_l
+    - knee_angle_r
+    - knee_angle_l
+    - ankle_angle_r
+    - ankle_angle_l
+    - lumbar_extension
+    - hip_abduction_r
+    - hip_abduction_l
+  rom:             # 关节活动范围 (度)
+    knee_angle:    { min: 60, max: 180, ideal_bottom: 95 }
+    hip_angle:     { min: 40, max: 180 }
+    ankle_angle:   { min: 15, max: 45 }
+    lumbar_angle:  { min: -10, max: 15 }   # 负值=屈曲/弓背
+    torso_lean:    { min: 0, max: 45 }      # 躯干前倾角度
+  symmetry_threshold: 8       # 左右对称最大允许差异(度)
+  errors:
+    - id: knee_valgus
+      name: "膝内扣"
+      condition: "knee_valgus_angle > 12"
+      severity: high
+      advice: "膝盖向外打开，对准脚尖方向"
+    - id: heel_lift
+      name: "脚跟抬起"
+      condition: "heel_height > 0.03"
+      severity: medium
+      advice: "重心放在全脚掌，脚跟踩实地面"
+    - id: back_rounding
+      name: "弓背/腰椎屈曲"
+      condition: "lumbar_angle < -10"
+      severity: high
+      advice: "收紧核心，胸部挺起，保持脊柱中立"
+    - id: insufficient_depth
+      name: "深度不足"
+      condition: "knee_angle > 100 and phase == BOTTOM"
+      severity: medium
+      advice: "下蹲至大腿与地面平行或更低"
+    - id: knee_over_toe
+      name: "膝过脚尖过多"
+      condition: "knee_toe_offset > 0.08"
+      severity: low
+      advice: "臀部向后坐，重心放在脚后跟"
+    - id: torso_too_upright
+      name: "躯干过于直立"
+      condition: "torso_lean < 5 and phase == DESCENT"
+      severity: low
+      advice: "适度前倾躯干，保持杠铃在脚中心上方"
+    - id: asymmetry
+      name: "左右不对称"
+      condition: "abs(hip_flexion_r - hip_flexion_l) > symmetry_threshold"
+      severity: medium
+      advice: "检查双脚是否对称，均匀分配体重"
+
+deadlift:
+  name: "硬拉"
+  name_en: "Deadlift"
+  phases:
+    - SETUP
+    - PULL
+    - LOCKOUT
+    - LOWER
+  key_joints:
+    - hip_flexion_r
+    - hip_flexion_l
+    - knee_angle_r
+    - knee_angle_l
+    - lumbar_extension
+    - shoulder_angle_r
+    - shoulder_angle_l
+  rom:
+    hip_angle:     { min: 30, max: 180 }
+    knee_angle:    { min: 60, max: 180 }
+    lumbar_angle:  { min: -15, max: 5 }
+  errors:
+    - id: back_rounding
+      name: "弓背"
+      condition: "lumbar_angle < -12"
+      severity: high
+      advice: "挺胸收腹，保持背部平直"
+    - id: hips_rising_first
+      name: "髋部先抬起"
+      condition: "hip_extension_rate > knee_extension_rate * 1.5"
+      severity: medium
+      advice: "同步伸展髋膝，不要先抬臀部"
+    - id: bar_too_far
+      name: "杠铃远离身体"
+      condition: "bar_hip_distance > 0.15"
+      severity: medium
+      advice: "杠铃贴近小腿和大腿向上拉"
+    - id: shoulder_forward
+      name: "肩膀前移"
+      condition: "shoulder_angle < 15"
+      severity: medium
+      advice: "肩膀向后下拉，收紧背阔肌"
+    - id: hyperextension
+      name: "锁定时过度后仰"
+      condition: "hip_angle > 185"
+      severity: medium
+      advice: "锁定在直立位置即可，不要过度后仰"
+
+pushup:
+  name: "俯卧撑"
+  name_en: "Push-up"
+  phases:
+    - SETUP        # 直臂支撑
+    - DESCENT      # 下降
+    - BOTTOM       # 底部
+    - ASCENT       # 推起
+    - LOCKOUT      # 锁定
+  key_joints:
+    - elbow_angle_r
+    - elbow_angle_l
+    - shoulder_angle_r
+    - shoulder_angle_l
+    - lumbar_extension
+    - hip_angle
+  rom:
+    elbow_angle:   { min: 45, max: 180, ideal_bottom: 90 }
+    lumbar_angle:  { min: -5, max: 10 }
+  errors:
+    - id: sagging_hips
+      name: "塌腰"
+      condition: "hip_drop > 0.05"
+      severity: high
+      advice: "收紧核心和臀部，身体呈一条直线"
+    - id: elbow_flare
+      name: "肘部外展过大"
+      condition: "elbow_abduction > 60"
+      severity: medium
+      advice: "手肘贴近身体，约45度角"
+    - id: insufficient_depth
+      name: "下降不足"
+      condition: "elbow_angle > 100 and phase == BOTTOM"
+      severity: medium
+      advice: "下降至胸部接近地面，肘部约90度"
+    - id: head_drop
+      name: "低头"
+      condition: "neck_angle < -15"
+      severity: low
+      advice: "保持颈部中立，眼睛看地面"
+
+pullup:
+  name: "引体向上"
+  name_en: "Pull-up"
+  phases:
+    - DEAD_HANG
+    - PULL_UP
+    - TOP
+    - LOWER
+  key_joints:
+    - elbow_angle_r
+    - elbow_angle_l
+    - shoulder_angle_r
+    - shoulder_angle_l
+    - scapula_depression
+  rom:
+    elbow_angle:   { min: 20, max: 180 }
+    shoulder_angle: { min: 0, max: 180 }
+  errors:
+    - id: kipping
+      name: "借力摆动"
+      condition: "body_swing > 0.1"
+      severity: medium
+      advice: "控制身体稳定，避免借力摆动"
+    - id: half_rep
+      name: "幅度不够"
+      condition: "elbow_angle > 45 and phase == TOP"
+      severity: high
+      advice: "拉至下巴过杠，下放至手臂完全伸展"
+    - id: uneven_pull
+      name: "左右不平衡"
+      condition: "abs(elbow_angle_r - elbow_angle_l) > 15"
+      severity: medium
+      advice: "保持两侧均匀发力"
+
+plank:
+  name: "平板支撑"
+  name_en: "Plank"
+  phases:
+    - HOLD
+  key_joints:
+    - elbow_angle_r
+    - elbow_angle_l
+    - lumbar_extension
+    - hip_angle
+  rom:
+    lumbar_angle: { min: -5, max: 5 }
+    hip_angle:    { min: 170, max: 180 }
+  errors:
+    - id: hip_sag
+      name: "髋部下塌"
+      condition: "lumbar_angle > 8"
+      severity: high
+      advice: "收紧臀部和核心，抬高髋部至与肩同高"
+    - id: hip_pike
+      name: "臀部过高"
+      condition: "hip_angle < 160"
+      severity: medium
+      advice: "降低髋部，保持身体呈一条直线"
+    - id: shoulder_protraction
+      name: "肩胛前伸"
+      condition: "scapula_position > 0.03"
+      severity: low
+      advice: "肩胛骨收紧，保持上背稳定"

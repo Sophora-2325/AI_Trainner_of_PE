@@ -1,0 +1,11 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/released/projects/robots/robotis/darwin-op/protos/RobotisOp2Hinge2.proto"
+
+PROTO MyRobotisOp2Hinge2 [
+]
+{
+  RobotisOp2Hinge2 {
+    rotation 0.7071067811865475 0 0.7071067811865475 0
+  }
+}
