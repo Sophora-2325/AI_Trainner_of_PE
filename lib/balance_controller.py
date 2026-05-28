@@ -1,4 +1,4 @@
-"""Balance controller for ROBOTIS OP3 during imitation playback.
+"""Balance controller for ROBOTIS OP2 during imitation playback.
 
 Uses simplified COM projection and ankle strategy to keep the robot
 stable during motions like squats, where the COM shifts rearward.
@@ -9,7 +9,7 @@ Fall detection mirrors the Walk.cpp accelerometer-based approach.
 import math
 from typing import Optional
 
-from .joint_config_op3 import MOTOR_NAMES
+from .joint_config_op2 import MOTOR_NAMES
 
 
 # ---- Simplified 5-link humanoid body model segment masses (fraction of total) ----
@@ -47,7 +47,7 @@ SEGMENT_COM_RATIO = {
 
 
 class BalanceController:
-    """Quasi-static balance controller for OP3."""
+    """Quasi-static balance controller for OP2."""
 
     def __init__(
         self,

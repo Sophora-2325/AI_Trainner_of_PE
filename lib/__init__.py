@@ -1,1 +1,1 @@
-# OP3 motion imitation library
+# OP2 motion imitation library

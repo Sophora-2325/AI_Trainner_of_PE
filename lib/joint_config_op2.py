@@ -1,4 +1,4 @@
-"""ROBOTIS OP3 joint/motor configuration constants.
+"""ROBOTIS OP2 joint/motor configuration constants.
 
 Based on Webots Symmetry.cpp motor ordering and the robot's 20-DOF layout.
 """
@@ -35,10 +35,10 @@ MOTOR_INDEX = {name: i for i, name in enumerate(MOTOR_NAMES)}
 # Motor IDs (1-indexed as in ROBOTIS OP2 framework)
 MOTOR_ID = {name: i + 1 for i, name in enumerate(MOTOR_NAMES)}
 
-# --- Human biomechanical angle → OP3 motor mapping ---
+# --- Human biomechanical angle → OP2 motor mapping ---
 # Each human angle maps to the motor on the same side.
 # Left-side motors are negated in map_frame() (symmetry from Symmetry.cpp).
-HUMAN_TO_OP3_MAP = {
+HUMAN_TO_OP2_MAP = {
     "knee_angle_r":   "LegLowerR",
     "knee_angle_l":   "LegLowerL",
     "hip_flexion_r":  "LegUpperR",
@@ -63,16 +63,12 @@ NEUTRAL_MOTORS = [
 # Motors reserved for balance control (set by BalanceController, not retargeting)
 BALANCE_MOTORS = ["AnkleR", "AnkleL", "FootR", "FootL"]
 
-# --- Standing offset: added to motor positions so "human standing" → stable OP3 crouch ---
+# --- Standing offset: added to motor positions so "human standing" → stable OP2 crouch ---
 # Without this, f_knee(180°) = 0 rad = fully extended knee (unstable).
 # Values in radians, applied per-motor (right positive, left negative for symmetry).
 STANDING_OFFSET_RAD = {
-    "LegLowerR":  0.30,   # slight knee bend for stability
-    "LegLowerL": -0.30,
-    "LegUpperR":  0.10,   # slight hip forward lean
-    "LegUpperL": -0.10,
-    "AnkleR":    -0.10,   # slight ankle dorsiflexion
-    "AnkleL":     0.10,
+    "LegLowerR":  0.15,   # conservative knee bend for stability
+    "LegLowerL": -0.15,
 }
 
 # --- ROM limits (approximate, calibrated from MX-28 specs) ---
@@ -101,47 +97,47 @@ DEFAULT_MOTOR_LIMITS_RAD = {
     "Head":       (-0.8, 0.8),
 }
 
-# --- Retargeting gains (human degrees → OP3 radians) ---
+# --- Retargeting gains (human degrees → OP2 radians) ---
 # human_knee: 180°=straight, ~60°=full bend
-# OP3 LegLower: 0 rad = straight, ~2.0 rad = full bend
+# OP2 LegLower: 0 rad = straight, ~2.0 rad = full bend
 RETARGET_GAINS = {
     "knee": {
         "human_neutral_deg": 180.0,   # straight leg
         "human_max_bend_deg": 60.0,   # max human knee bend (from movements.yaml)
-        "op3_neutral_rad": 0.0,
-        "op3_max_bend_rad": 2.0,      # approximate MX-28 range
+        "op2_neutral_rad": 0.0,
+        "op2_max_bend_rad": 2.0,      # approximate MX-28 range
     },
     "hip": {
         "human_neutral_deg": 180.0,   # upright
         "human_max_flex_deg": 45.0,   # deep squat hip angle (from movements.yaml min=40)
-        "op3_neutral_rad": 0.0,
-        "op3_max_flex_rad": 1.5,      # forward hip pitch
+        "op2_neutral_rad": 0.0,
+        "op2_max_flex_rad": 1.5,      # forward hip pitch
     },
     "ankle": {
         "human_neutral_deg": 90.0,    # standing ankle
         "human_max_dorsi_deg": 70.0,  # max dorsiflexion
-        "op3_neutral_rad": 0.0,
-        "op3_max_dorsi_rad": 0.5,
+        "op2_neutral_rad": 0.0,
+        "op2_max_dorsi_rad": 0.5,
     },
     "elbow": {
         "human_neutral_deg": 180.0,   # straight arm
         "human_max_bend_deg": 45.0,   # max elbow bend (pushup bottom)
-        "op3_neutral_rad": 0.0,
-        "op3_max_bend_rad": 2.5,
+        "op2_neutral_rad": 0.0,
+        "op2_max_bend_rad": 2.5,
     },
     "shoulder": {
         "human_neutral_deg": 0.0,     # arm at side
-        "op3_neutral_rad": 0.0,
+        "op2_neutral_rad": 0.0,
         "gain": 0.01,                 # rad per degree (gentle scaling)
     },
     "hip_abduction": {
         "human_neutral_deg": 0.0,
-        "op3_neutral_rad": 0.0,
+        "op2_neutral_rad": 0.0,
         "gain": 0.005,
     },
 }
 
-# Lumbar extension distribution: how to split spine angle across OP3 joints
+# Lumbar extension distribution: how to split spine angle across OP2 joints
 # 60% to hip pitch, 40% to shoulder pitch
 LUMBAR_HIP_RATIO = 0.6
 LUMBAR_SHOULDER_RATIO = 0.4

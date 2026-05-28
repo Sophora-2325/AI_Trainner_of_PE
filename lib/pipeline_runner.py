@@ -1,9 +1,9 @@
-"""End-to-end pipeline: video/template → OP3 motor keyframes → JSON.
+"""End-to-end pipeline: video/template → OP2 motor keyframes → JSON.
 
 Orchestrates the full processing chain:
   1. Extract human poses (from video or template)
   2. Compute biomechanical joint angles
-  3. Retarget to OP3 motor positions
+  3. Retarget to OP2 motor positions
   4. Apply balance corrections
   5. Save as MotionKeyframes JSON
 """
@@ -15,13 +15,13 @@ from typing import Optional
 
 import numpy as np
 
-from .retargeting_mapper import HumanAngleToOP3Mapper
+from .retargeting_mapper import HumanAngleToOP2Mapper
 from .balance_controller import BalanceController
 from .motion_keyframes import MotionKeyframes
 
 
 class PipelineRunner:
-    """Run the full video/template → OP3 motion pipeline."""
+    """Run the full video/template → OP2 motion pipeline."""
 
     def __init__(
         self,
@@ -35,7 +35,7 @@ class PipelineRunner:
             balance_enabled: Whether to apply balance corrections
             time_scale: Playback speed factor (>1 = slower, <1 = faster)
         """
-        self.mapper = HumanAngleToOP3Mapper(motor_limits)
+        self.mapper = HumanAngleToOP2Mapper(motor_limits)
         self.balance = BalanceController() if balance_enabled else None
         self.time_scale = time_scale
 
@@ -48,7 +48,7 @@ class PipelineRunner:
         frame_rate: int = 30,
         output_path: Optional[str] = None,
     ) -> MotionKeyframes:
-        """Convert a sequence of human angle dicts to OP3 keyframes.
+        """Convert a sequence of human angle dicts to OP2 keyframes.
 
         Args:
             human_angle_sequence: List of {angle_name: degrees} from GeometricIKSolver
@@ -59,7 +59,7 @@ class PipelineRunner:
         Returns:
             MotionKeyframes ready for playback
         """
-        # Step 1: Retarget to OP3 motor positions
+        # Step 1: Retarget to OP2 motor positions
         motor_seqs = self.mapper.map_sequence(human_angle_sequence)
 
         # Step 2: Balance corrections
@@ -92,7 +92,7 @@ class PipelineRunner:
         name: Optional[str] = None,
         output_dir: str = "motions",
     ) -> MotionKeyframes:
-        """Convert a .npy movement template to OP3 keyframes.
+        """Convert a .npy movement template to OP2 keyframes.
 
         The .npy file should contain a dict with:
           - "joint_angles": (T, N) array of human joint angles in degrees
@@ -223,7 +223,7 @@ class PipelineRunner:
         output_dir: str = "motions",
         target_fps: int = 30,
     ) -> Optional[MotionKeyframes]:
-        """Process a training video and produce OP3 keyframes.
+        """Process a training video and produce OP2 keyframes.
 
         Uses MediaPipe Pose + GeometricIKSolver from Teacher Feng's project.
         The project must be on sys.path.

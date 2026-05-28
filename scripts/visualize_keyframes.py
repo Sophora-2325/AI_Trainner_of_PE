@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot OP3 motor position curves from a motion JSON file.
+"""Plot OP2 motor position curves from a motion JSON file.
 
 Usage:
   python scripts/visualize_keyframes.py motions/squat_imitation.json
@@ -27,7 +27,7 @@ except ImportError:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Visualize OP3 motion keyframe curves"
+        description="Visualize OP2 motion keyframe curves"
     )
     parser.add_argument("motion_file", help="Path to motion JSON file")
     parser.add_argument(

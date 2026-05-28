@@ -1,4 +1,4 @@
-"""ROBOTIS OP3 Motion Imitation Controller.
+"""ROBOTIS OP2 Motion Imitation Controller.
 
 Loads a pre-computed motion JSON file and plays it back on the robot
 frame-by-frame in the Webots simulation.
@@ -41,7 +41,7 @@ VELOCITY_LIMITS = {
 }
 
 
-class OP3ImitationController:
+class OP2ImitationController:
     def __init__(self):
         self.robot = Robot()
         self.time_step = int(self.robot.getBasicTimeStep())
@@ -95,9 +95,9 @@ class OP3ImitationController:
         self._transition_step = 0
         self._transition_total = 30       # steps for smooth transition
 
-        print(f"[OP3 Controller] Initialized with {len(MOTOR_NAMES)} motors, "
+        print(f"[OP2 Controller] Initialized with {len(MOTOR_NAMES)} motors, "
               f"time_step={self.time_step}ms")
-        print("[OP3 Controller] Motor limits:")
+        print("[OP2 Controller] Motor limits:")
         for name in ["LegLowerR", "LegUpperR", "AnkleR"]:
             print(f"  {name}: [{self.motor_min[name]:.3f}, {self.motor_max[name]:.3f}] rad")
 
@@ -108,15 +108,15 @@ class OP3ImitationController:
             with open(path, "r") as f:
                 self.motion_data = json.load(f)
         except FileNotFoundError:
-            print(f"[OP3 Controller] Motion file not found: {path}")
+            print(f"[OP2 Controller] Motion file not found: {path}")
             return False
         except json.JSONDecodeError as e:
-            print(f"[OP3 Controller] Invalid JSON: {e}")
+            print(f"[OP2 Controller] Invalid JSON: {e}")
             return False
 
         raw = self.motion_data.get("motor_positions", {})
         if not raw:
-            print("[OP3 Controller] Motion file has no motor_positions")
+            print("[OP2 Controller] Motion file has no motor_positions")
             return False
 
         self.motor_sequences = {}
@@ -131,18 +131,18 @@ class OP3ImitationController:
         name = self.motion_data.get("name", "unknown")
         fps = self.motion_data.get("frame_rate", 30)
         duration = self.num_frames / fps if fps > 0 else 0
-        print(f"[OP3 Controller] Loaded '{name}': {self.num_frames} frames, "
+        print(f"[OP2 Controller] Loaded '{name}': {self.num_frames} frames, "
               f"{fps} FPS, {duration:.1f}s")
         return True
 
     # ---- Main Loop ----
 
     def run(self):
-        motion_path = os.environ.get("OP3_MOTION_FILE", DEFAULT_MOTION_FILE)
+        motion_path = os.environ.get("OP2_MOTION_FILE", DEFAULT_MOTION_FILE)
         if os.path.exists(motion_path):
             self.load_motion(motion_path)
         else:
-            print(f"[OP3 Controller] No motion file at {motion_path}")
+            print(f"[OP2 Controller] No motion file at {motion_path}")
 
         # --- Startup calibration phase ---
         # Set a mild crouch pose for stability during calibration
@@ -162,21 +162,21 @@ class OP3ImitationController:
                 init_pose[name] = 0.0
         self._set_all_motors(init_pose)
 
-        print("[OP3 Controller] Calibrating standing pose...")
+        print("[OP2 Controller] Calibrating standing pose...")
         for _ in range(150):
             self._step()
 
         # Read actual sensor positions as calibrated standing pose
         for name in MOTOR_NAMES:
             self.standing_pose[name] = self.position_sensors[name].getValue()
-        print("[OP3 Controller] Calibrated standing pose:")
+        print("[OP2 Controller] Calibrated standing pose:")
         for name in ["LegLowerR", "LegLowerL", "LegUpperR", "LegUpperL", "AnkleR", "AnkleL"]:
             print(f"  {name}: {self.standing_pose[name]:.3f} rad")
 
         # Set motors to calibrated standing pose
         self._set_all_motors(self.standing_pose)
 
-        print("[OP3 Controller] Ready. Controls: Space=Play, R=Reset, S=Stop, 1/2=Speed, ESC=Quit")
+        print("[OP2 Controller] Ready. Controls: Space=Play, R=Reset, S=Stop, 1/2=Speed, ESC=Quit")
 
         # --- Main simulation loop ---
         while self.robot.step(self.time_step) != -1:
@@ -199,7 +199,7 @@ class OP3ImitationController:
             else:
                 self._hold_current_frame()
 
-        print("[OP3 Controller] Shutting down.")
+        print("[OP2 Controller] Shutting down.")
 
     # ---- Smooth Transition ----
 
@@ -255,7 +255,7 @@ class OP3ImitationController:
                 else:
                     self.current_frame = self.num_frames - 1
                     self.playing = False
-                    print("[OP3 Controller] Motion complete. Press Space to replay.")
+                    print("[OP2 Controller] Motion complete. Press Space to replay.")
 
         self._set_frame(self.current_frame)
 
@@ -301,7 +301,7 @@ class OP3ImitationController:
         self.playing = False
         self._transition_active = False
         self.fall_count = 0
-        print("[OP3 Controller] Fall detected! Returning to standing pose.")
+        print("[OP2 Controller] Fall detected! Returning to standing pose.")
         self._start_transition(self.standing_pose, steps=60)
         self.current_frame = 0
         self.frame_accumulator = 0.0
@@ -315,7 +315,7 @@ class OP3ImitationController:
                 self.playing = not self.playing
                 self._transition_active = False
                 state = "PLAYING" if self.playing else "PAUSED"
-                print(f"[OP3 Controller] {state} at frame {self.current_frame}")
+                print(f"[OP2 Controller] {state} at frame {self.current_frame}")
             elif key == ord("R") or key == ord("r"):
                 self.playing = False
                 self.current_frame = 0
@@ -325,19 +325,19 @@ class OP3ImitationController:
                     seq = self.motor_sequences.get(name, [0.0])
                     target[name] = seq[0] if seq else 0.0
                 self._start_transition(target, steps=30)
-                print("[OP3 Controller] Resetting to frame 0 (smooth)")
+                print("[OP2 Controller] Resetting to frame 0 (smooth)")
             elif key == ord("S") or key == ord("s"):
                 self.playing = False
                 self.current_frame = 0
                 self.frame_accumulator = 0.0
                 self._start_transition(self.standing_pose, steps=40)
-                print("[OP3 Controller] Stopping to standing pose (smooth)")
+                print("[OP2 Controller] Stopping to standing pose (smooth)")
             elif key == ord("1"):
                 self.play_speed = max(0.1, self.play_speed * 0.5)
-                print(f"[OP3 Controller] Speed: {self.play_speed:.1f}x")
+                print(f"[OP2 Controller] Speed: {self.play_speed:.1f}x")
             elif key == ord("2"):
                 self.play_speed = min(4.0, self.play_speed * 2.0)
-                print(f"[OP3 Controller] Speed: {self.play_speed:.1f}x")
+                print(f"[OP2 Controller] Speed: {self.play_speed:.1f}x")
             elif key == Keyboard.LEFT:
                 self.playing = False
                 self._transition_active = False
@@ -355,5 +355,5 @@ class OP3ImitationController:
 
 
 if __name__ == "__main__":
-    controller = OP3ImitationController()
+    controller = OP2ImitationController()
     controller.run()

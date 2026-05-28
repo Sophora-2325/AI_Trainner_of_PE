@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate OP3 motion JSON from a .npy movement template.
+"""Generate OP2 motion JSON from a .npy movement template.
 
 Usage:
   python scripts/generate_motion_from_template.py --template movement_data/squat_reference.npy
@@ -18,7 +18,7 @@ from lib.pipeline_runner import PipelineRunner
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert .npy movement template to OP3 motion JSON"
+        description="Convert .npy movement template to OP2 motion JSON"
     )
     parser.add_argument(
         "--template", required=True,

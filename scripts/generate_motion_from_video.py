@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Generate OP3 motion JSON from a training video.
+"""Generate OP2 motion JSON from a training video.
 
 Uses MediaPipe Pose + GeometricIKSolver from Teacher Feng's project
-to extract human poses, then retargets to OP3 motor positions.
+to extract human poses, then retargets to OP2 motor positions.
 
 Usage:
   python scripts/generate_motion_from_video.py --video path/to/squat.mp4
@@ -20,7 +20,7 @@ from lib.pipeline_runner import PipelineRunner
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert training video to OP3 motion JSON"
+        description="Convert training video to OP2 motion JSON"
     )
     parser.add_argument(
         "--video", required=True,

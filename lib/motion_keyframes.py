@@ -1,4 +1,4 @@
-"""Motion keyframes — motor position sequences for OP3 playback.
+"""Motion keyframes — motor position sequences for OP2 playback.
 
 Stores per-motor position arrays and supports JSON serialization,
 interpolation between sparse keyframes, and time scaling.
@@ -8,12 +8,12 @@ import json
 import math
 from dataclasses import dataclass, field
 
-from .joint_config_op3 import MOTOR_NAMES
+from .joint_config_op2 import MOTOR_NAMES
 
 
 @dataclass
 class MotionKeyframes:
-    """A sequence of motor positions for all 20 OP3 motors.
+    """A sequence of motor positions for all 20 OP2 motors.
 
     Args:
         name: Motion name (e.g. "squat", "deadlift")
