@@ -1,0 +1,67 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/robotis/darwin-op/protos/RobotisOp2.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/Floor.proto"
+
+WorldInfo {
+}
+Viewpoint {
+  orientation -0.25171081749966084 -0.16176851195912667 0.9541868857263668 3.9880498524639814
+  position 1.9737686739521514 2.350218383439423 1.611616731161814
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+RobotisOp2 {
+  hidden position_0_0 1.5312561775170118e-08
+  hidden position_0_1 -4.662619517277413e-08
+  hidden position_0_2 9.469997339148039e-07
+  hidden position_0_3 6.651355666893772e-07
+  hidden position_0_4 -6.693092822808242e-07
+  hidden rotation_10 0.5774169299934686 0.577316935901562 0.5773169359010263 2.0944000088402017
+  hidden position_10_0 -2.5240235803624843e-08
+  hidden rotation_11 1 0 0 0.7854000252402351
+  hidden rotation_15 0.5773564625139651 0.5773470757142287 0.5773472692908395 2.094414848110588
+  hidden position_15_0 -2.909011443412386e-08
+  hidden rotation_16 0 0 1 2.9802322387695313e-08
+  hidden position_16_0 -0.09305027495567869
+  hidden rotation_17 1 0 0 0.09305027495567945
+  hidden position_17_0 -0.3000003433248488
+  hidden rotation_18 1 0 0 0.3000003433248492
+  hidden position_18_0 0.11390050817055705
+  hidden rotation_19 0.9999999999999999 0 0 0.11390050817055562
+  hidden position_19_0 2.4227963818253225e-09
+  hidden rotation_20 0 0 1 0
+  hidden rotation_21 0.5773266426940351 0.5773621059131077 0.5773620582366108 2.09441624079016
+  hidden position_21_0 -8.671573044516554e-07
+  hidden rotation_22 0 0 1 8.67344868830166e-07
+  hidden position_22_0 0.0930504673455478
+  hidden rotation_23 1 0 0 0.09305046734554691
+  hidden position_23_0 0.300000529946741
+  hidden rotation_24 1 0 0 0.30000052994674126
+  hidden position_24_0 -0.11390050813454666
+  hidden rotation_25 1 0 0 0.1139005081345452
+  hidden position_25_0 2.6599086870302076e-07
+  hidden rotation_26 0 0 1 2.665600749850024e-07
+  hidden rotation_27 0.5773426581431016 0.577355342211741 0.5773528071360021 2.0944418433359804
+  hidden position_27_0 -9.521078347168042e-07
+  hidden rotation_28 0 0 1 0.7854009521078342
+  hidden position_28_0 4.388178347402575e-07
+  hidden rotation_29 -1 0 0 1.5707995611821655
+  hidden rotation_30 0.5773830079187645 0.5773560614680806 0.5773117359388651 2.0943623916126635
+  hidden position_30_0 9.487774666119975e-07
+  hidden rotation_31 0 0 -1 0.7854009487774661
+  hidden position_31_0 -4.3750061636508587e-07
+  hidden rotation_32 -1 0 0 1.5707995624993834
+  translation 0.5552298368011185 0.5702850017624835 0.1679297193235148
+  rotation -0.15881993951957898 0.9455466998971569 0.28410854461735796 1.0678010062965826
+  controller "Walkforward"
+  controllerArgs [
+    ""
+  ]
+}
+Floor {
+}
