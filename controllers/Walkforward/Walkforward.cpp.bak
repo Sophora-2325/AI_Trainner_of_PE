@@ -1,0 +1,139 @@
+#include <webots/Robot.hpp>
+#include <webots/Keyboard.hpp>
+#include <webots/Motor.hpp>
+#include <webots/PositionSensor.hpp>
+#include <algorithm>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace webots;
+
+// 所有 20 个电机名称（与 OP2 模型一致）
+const char *MOTOR_NAMES[] = {
+  "ShoulderR", "ShoulderL", "ArmUpperR", "ArmUpperL",
+  "ArmLowerR", "ArmLowerL", "PelvYR", "PelvYL",
+  "PelvR", "PelvL", "LegUpperR", "LegUpperL",
+  "LegLowerR", "LegLowerL", "AnkleR", "AnkleL",
+  "FootR", "FootL", "Neck", "Head",
+};
+const int MOTOR_COUNT = 20;
+
+int main(int argc, char **argv) {
+  Robot *robot = new Robot();
+  int timeStep = (int)robot->getBasicTimeStep();
+
+  // 键盘
+  Keyboard *keyboard = robot->getKeyboard();
+  keyboard->enable(timeStep);
+
+  // 获取所有电机和位置传感器
+  Motor *motors[MOTOR_COUNT];
+  PositionSensor *sensors[MOTOR_COUNT];
+  double standPose[MOTOR_COUNT];
+
+  for (int i = 0; i < MOTOR_COUNT; i++) {
+    motors[i] = robot->getMotor(MOTOR_NAMES[i]);
+    // 位置传感器名 = 电机名 + "S"
+    std::string sensorName = std::string(MOTOR_NAMES[i]) + "S";
+    sensors[i] = robot->getPositionSensor(sensorName);
+    sensors[i]->enable(timeStep);
+  }
+
+  // 先执行一步让传感器获取当前值
+  robot->step(timeStep);
+
+  // 从传感器读取模型初始站立姿态，作为基准
+  for (int i = 0; i < MOTOR_COUNT; i++)
+    standPose[i] = sensors[i]->getValue();
+
+  // 保持站立姿态一段时间稳定
+  for (int i = 0; i < MOTOR_COUNT; i++)
+    motors[i]->setPosition(standPose[i]);
+  for (int s = 0; s < 50; s++)
+    robot->step(timeStep);
+
+  double time = 0.0;
+  bool walking = false;
+  const double dt = timeStep / 1000.0;
+  const double freq = 1.5;        // 步频 Hz
+  const double stepHeight = 0.3;  // 抬腿幅度 (rad)
+  const double stepLength = 0.3;  // 步幅 (rad)
+  const double armSwing = 0.5;    // 摆臂幅度 (rad)
+
+  while (robot->step(timeStep) != -1) {
+    int key = keyboard->getKey();
+    if (key == 'W')
+      walking = true;
+    else if (key >= 0)
+      walking = false;
+
+    double pose[MOTOR_COUNT];
+
+    if (walking) {
+      time += dt;
+
+      double phase = 2.0 * M_PI * freq * time;
+      double phaseR = phase;
+      double phaseL = phase + M_PI;
+
+      // LegUpper = hip pitch, 大腿前后摆动 (左右同向轴)
+      double hipR = stepLength * std::sin(phaseR);
+      double hipL = stepLength * std::sin(phaseL);
+
+      // LegLower = knee, swing phase 时弯曲抬脚
+      // 膝关节左右镜像：右正值=弯曲, 左负值=弯曲
+      double swingR = std::max(0.0, std::cos(phaseR));
+      double swingL = std::max(0.0, std::cos(phaseL));
+      double kneeR = stepHeight * swingR;
+      double kneeL = -stepHeight * swingL;
+
+      // Ankle 补偿, 保持脚掌水平着地 (左右镜像)
+      double ankleR = -0.5 * hipR;
+      double ankleL = 0.5 * hipL;
+
+      // PelvR/L = hip roll, 骨盆侧倾移重心到支撑腿 (左右镜像)
+      double pelvR = 0.05 * std::cos(phaseR);
+      double pelvL = -0.05 * std::cos(phaseL);
+
+      // 摆臂
+      double shoulderR = -armSwing * std::sin(phaseR);
+      double shoulderL = -armSwing * std::sin(phaseL);
+
+      // 组装：以 standPose 为基准叠加行走运动
+      pose[0]  = standPose[0]  + shoulderR;   // ShoulderR
+      pose[1]  = standPose[1]  + shoulderL;   // ShoulderL
+      pose[2]  = standPose[2];                // ArmUpperR
+      pose[3]  = standPose[3];                // ArmUpperL
+      pose[4]  = standPose[4];                // ArmLowerR
+      pose[5]  = standPose[5];                // ArmLowerL
+      pose[6]  = standPose[6];                // PelvYR
+      pose[7]  = standPose[7];                // PelvYL
+      pose[8]  = standPose[8]  + pelvR;       // PelvR
+      pose[9]  = standPose[9]  + pelvL;       // PelvL
+      pose[10] = standPose[10] + hipR;        // LegUpperR
+      pose[11] = standPose[11] + hipL;        // LegUpperL
+      pose[12] = standPose[12] + kneeR;       // LegLowerR
+      pose[13] = standPose[13] + kneeL;       // LegLowerL
+      pose[14] = standPose[14] + ankleR;      // AnkleR
+      pose[15] = standPose[15] + ankleL;      // AnkleL
+      pose[16] = standPose[16];               // FootR
+      pose[17] = standPose[17];               // FootL
+      pose[18] = standPose[18];               // Neck
+      pose[19] = standPose[19];               // Head
+    } else {
+      time = 0.0;
+      for (int i = 0; i < MOTOR_COUNT; i++)
+        pose[i] = standPose[i];
+    }
+
+    // 写入电机
+    for (int i = 0; i < MOTOR_COUNT; i++)
+      motors[i]->setPosition(pose[i]);
+  }
+
+  delete robot;
+  return 0;
+}
