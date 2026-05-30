@@ -106,7 +106,7 @@ class OP2RealtimeController:
             if self.client_sock is None:
                 try:
                     self.client_sock, addr = self.server_sock.accept()
-                    self.client_sock.settimeout(0.1)
+                    self.client_sock.settimeout(None)  # blocking — wait for data
                     print(f"[OP2] TCP client connected: {addr}")
                     self.mirroring_active = True
                 except socket.timeout:
@@ -150,7 +150,11 @@ class OP2RealtimeController:
             from lib.retargeting_mapper import HumanAngleToOP2Mapper
             mapper = HumanAngleToOP2Mapper()
             motor_positions = mapper.map_frame(human_angles)
-        except ImportError:
+        except ImportError as e:
+            print(f"[OP2] Retarget mapper import failed: {e}")
+            return
+        except Exception as e:
+            print(f"[OP2] Map frame error: {e}")
             return
 
         with self.tcp_lock:
@@ -281,6 +285,10 @@ class OP2RealtimeController:
 
                 if targets:
                     self._set_motors_smooth(targets)
+                    if self.step_count % 90 == 1:
+                        print(f"[OP2] frame {self.step_count} | "
+                              f"LegLowerR={targets.get('LegLowerR', 0):.3f} "
+                              f"LegUpperR={targets.get('LegUpperR', 0):.3f}")
 
         print("[OP2] Shutting down.")
         if self.server_sock:
