@@ -25,7 +25,7 @@ bridge:
 # WSL2 环境
 wsl:
   conda_env: "fitness_coach"
-  opensim_model: "/mnt/d/冯老师项目/WorkPlace/opensim_models/Rajagopal2015.osim"
+  opensim_model: "/mnt/d/Project_of_Teacher_Feng/WorkPlace/opensim_models/Rajagopal2015.osim"
 
 # OpenSim
 opensim:
@@ -38,6 +38,9 @@ webots:
   world_path: "webots_project/worlds/fitness_coach.wbt"
   proto_dir: "webots_project/protos"
   time_step: 16                # 仿真步长 (ms), 约60fps
+  op2_host: "localhost"
+  op2_port: 10020
+  op2_enabled: false           # 实时镜像模式开关
 
 # 评分
 scoring:
@@ -51,11 +54,13 @@ scoring:
 
 # LLM (Qwen2-7B)
 llm:
-  model_path: "Qwen/Qwen2-7B-Instruct"  # 或本地绝对路径
+  model_path: "qwen2:7b"              # Ollama 模型名 或 HuggingFace 路径
   device: "cuda"
   max_new_tokens: 80
   temperature: 0.3
-  use_4bit_quantization: true  # 4-bit量化降低显存
+  use_4bit_quantization: true         # 4-bit量化（仅 transformers 模式）
+  use_ollama: true                    # true=Ollama API / false=本地 transformers
+  ollama_host: "http://localhost:11434"
 
 # TTS
 tts:

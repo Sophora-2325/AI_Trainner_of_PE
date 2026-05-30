@@ -22,6 +22,7 @@ import yaml
 import cv2
 import numpy as np
 from collections import Counter, deque
+from typing import Optional
 
 # 添加项目根目录
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -37,6 +38,7 @@ from src.feedback.llm_advisor import LLMAdvisor, AdviceContext
 from src.feedback.tts_engine import TTSEngine
 from src.ui.overlay import OverlayRenderer
 from src.ui.dashboard import DashboardData, ConsoleDashboard
+from src.webots.op2_client import OP2RealtimeClient
 
 
 class FitnessCoach:
@@ -88,9 +90,11 @@ class FitnessCoach:
         self.use_llm = config.get("use_llm", True)
         if self.use_llm:
             self.advisor = LLMAdvisor(
-                model_path=llm_cfg.get("model_path", "Qwen/Qwen2-7B-Instruct"),
+                model_path=llm_cfg.get("model_path", "qwen2:7b"),
                 device=llm_cfg.get("device", "cuda"),
                 use_4bit=llm_cfg.get("use_4bit_quantization", True),
+                use_ollama=llm_cfg.get("use_ollama", True),
+                ollama_host=llm_cfg.get("ollama_host", "http://localhost:11434"),
             )
         else:
             self.advisor = None
@@ -101,6 +105,15 @@ class FitnessCoach:
             engine=tts_cfg.get("engine", "edge-tts"),
             voice=tts_cfg.get("voice", "zh-CN-XiaoxiaoNeural"),
         )
+
+        # Webots OP2 real-time client
+        webots_cfg = config.get("webots", {})
+        self.webots_client: Optional[OP2RealtimeClient] = None
+        if config.get("webots_op2_enabled", False):
+            self.webots_client = OP2RealtimeClient(
+                host=webots_cfg.get("op2_host", "localhost"),
+                port=webots_cfg.get("op2_port", 10020),
+            )
 
         # UI
         ui_cfg = config.get("ui", {})
@@ -167,6 +180,14 @@ class FitnessCoach:
             else:
                 print("[Coach] OpenSim 不可用，使用本地几何IK")
 
+        # 连接 Webots OP2 (可选)
+        if self.webots_client is not None:
+            ok = self.webots_client.connect()
+            if ok:
+                print("[Coach] Webots OP2 实时镜像已连接")
+            else:
+                print("[Coach] Webots OP2 不可用（请先启动 Webots 仿真）")
+
         # 加载 LLM (可选)
         if self.use_llm and self.advisor is not None:
             self.advisor.load()
@@ -218,6 +239,8 @@ class FitnessCoach:
             cv2.destroyAllWindows()
         self.estimator.close()
         self.opensim_client.disconnect()
+        if self.webots_client is not None:
+            self.webots_client.disconnect()
         print("\n[Coach] 训练结束")
 
     def _main_loop(self):
@@ -230,6 +253,9 @@ class FitnessCoach:
             if not ret:
                 if self._video_mode:
                     break  # 视频播放完毕
+                if self._frame_idx == 0:
+                    self._frame_idx += 1  # 阻止重复打印
+                    print(f"[Coach] 无法读取摄像头 (device_id={self.config.get('camera', {}).get('device_id', 0)})，请检查设备ID")
                 continue
 
             if not self._video_mode:
@@ -255,6 +281,12 @@ class FitnessCoach:
 
             # ─── 2. 逆运动学求解 ──────────────────────
             joint_angles = self._solve_ik(landmarks)
+
+            # Webots OP2 实时镜像发送
+            if self._frame_idx == 5:
+                print(f"[Coach] webots_client={self.webots_client} is_connected={self.webots_client.is_connected if self.webots_client else 'N/A'}")
+            if self.webots_client is not None and self.webots_client.is_connected:
+                self.webots_client.send_joint_angles(joint_angles)
 
             # ─── 3. 动作阶段检测 ──────────────────────
             phase = self.phase_tracker.update(joint_angles, landmarks)
@@ -492,11 +524,14 @@ def main():
                         help="输出视频路径（默认自动生成: {input}_analyzed.mp4）")
     parser.add_argument("--list-movements", action="store_true",
                         help="列出所有支持的动作")
+    parser.add_argument("--webots", action="store_true",
+                        help="启用 Webots OP2 实时镜像模式")
     args = parser.parse_args()
 
     config = load_config(args.config)
     config["use_opensim"] = not args.no_opensim
     config["use_llm"] = not args.no_llm
+    config["webots_op2_enabled"] = args.webots
 
     if args.list_movements:
         lib = MovementLibrary()

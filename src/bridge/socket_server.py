@@ -339,7 +339,7 @@ if __name__ == "__main__":
     import os
     model_path = os.environ.get(
         "OPENSIM_MODEL_PATH",
-        "/mnt/d/冯老师项目/WorkPlace/opensim_models/Rajagopal2015.osim",
+        "/mnt/d/Project_of_Teacher_Feng/WorkPlace/opensim_models/Rajagopal2015.osim",
     )
     server = OpenSimServer(model_path=model_path)
     server.start()

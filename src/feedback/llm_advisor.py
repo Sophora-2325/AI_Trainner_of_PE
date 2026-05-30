@@ -1,5 +1,11 @@
-"""LLM 健身教练建议生成 — 使用 Qwen2-7B 生成中文矫正建议."""
+"""LLM 健身教练建议生成 — 使用 Qwen2-7B 生成中文矫正建议.
 
+支持两种后端:
+  - transformers: 本地加载 HuggingFace 模型（需要 GPU 显存）
+  - ollama: 通过 Ollama HTTP API 调用（需先启动 ollama serve）
+"""
+
+import json
 from dataclasses import dataclass, field
 from typing import Optional
 import logging
@@ -45,16 +51,41 @@ class LLMAdvisor:
         model_path: str = "Qwen/Qwen2-7B-Instruct",
         device: str = "cuda",
         use_4bit: bool = True,
+        use_ollama: bool = False,
+        ollama_host: str = "http://localhost:11434",
     ):
         self.model_path = model_path
         self.device = device
         self.use_4bit = use_4bit
+        self.use_ollama = use_ollama
+        self.ollama_host = ollama_host
         self._model = None
         self._tokenizer = None
         self._loaded = False
 
     def load(self) -> bool:
         """加载模型."""
+        if self.use_ollama:
+            return self._load_ollama()
+        return self._load_transformers()
+
+    def _load_ollama(self) -> bool:
+        """检查 Ollama 服务是否可用."""
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"{self.ollama_host}/api/tags")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+            models = [m["name"] for m in data.get("models", [])]
+            logger.info(f"[LLMAdvisor] Ollama 可用，已有模型: {models}")
+            self._loaded = True
+            return True
+        except Exception as e:
+            logger.error(f"[LLMAdvisor] Ollama 连接失败 ({self.ollama_host}): {e}")
+            return False
+
+    def _load_transformers(self) -> bool:
+        """加载 HuggingFace transformers 模型."""
         try:
             from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
@@ -101,9 +132,51 @@ class LLMAdvisor:
         Returns:
             中文矫正建议字符串
         """
-        if self._loaded and self._model is not None:
+        if not self._loaded:
+            return self._generate_rule_based(context)
+        if self.use_ollama:
+            return self._generate_ollama(context)
+        elif self._model is not None:
             return self._generate_llm(context)
         else:
+            return self._generate_rule_based(context)
+
+    def _generate_ollama(self, context: AdviceContext) -> str:
+        """通过 Ollama API 生成建议."""
+        error_text = ", ".join(
+            f"{e.name}({e.severity})" for e in context.errors[:3]
+        ) if context.errors else "无明显错误"
+
+        prompt = f"""{self.SYSTEM_PROMPT}
+
+当前动作: {context.movement_name}
+动作阶段: {context.phase}
+综合评分: {context.score:.0f}/100
+检测到的问题: {error_text}
+
+请给出纠正建议："""
+
+        try:
+            import urllib.request
+            body = json.dumps({
+                "model": self.model_path,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "num_predict": 80,
+                },
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.ollama_host}/api/generate",
+                data=body,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+            return data.get("response", "").strip()
+        except Exception as e:
+            logger.error(f"[LLMAdvisor] Ollama 生成失败: {e}")
             return self._generate_rule_based(context)
 
     def _generate_llm(self, context: AdviceContext) -> str:

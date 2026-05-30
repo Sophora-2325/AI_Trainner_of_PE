@@ -76,7 +76,7 @@ class ConsoleDashboard:
         phase_str = phase.value if phase else "---"
         bar_len = 30
         filled = int(score / 100 * bar_len)
-        bar = "█" * filled + "░" * (bar_len - filled)
+        bar = "#" * filled + "-" * (bar_len - filled)
 
         error_str = ", ".join(e.name for e in errors[:2]) if errors else "无"
 
