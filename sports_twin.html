@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D 孪生对比 — AI 健身教练</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    overflow: hidden;
+  }
+  #header {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: 12px 20px; background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; gap: 20px;
+    z-index: 10;
+  }
+  #header h1 { font-size: 1.4em; color: #00d4aa; margin-right: auto; }
+  .label { font-size: 0.85em; color: #aaa; }
+  select, button {
+    padding: 6px 14px; border: 1px solid #444;
+    border-radius: 4px; background: #2a2a3e; color: #eee;
+    font-size: 0.9em; cursor: pointer;
+  }
+  select:hover, button:hover { border-color: #00d4aa; }
+  #status {
+    position: absolute; top: 70px; right: 20px;
+    padding: 6px 14px; border-radius: 4px;
+    font-size: 0.85em; z-index: 10;
+  }
+  .connected { background: rgba(0,200,100,0.3); color: #0f0; }
+  .disconnected { background: rgba(200,0,0,0.3); color: #f66; }
+  #labels {
+    position: absolute; bottom: 30px; left: 0; right: 0;
+    display: flex; justify-content: space-around;
+    pointer-events: none; z-index: 10;
+  }
+  .user-label, .template-label {
+    padding: 8px 20px; border-radius: 4px;
+    font-size: 1.1em; font-weight: bold;
+  }
+  .user-label { color: #4dc9f6; }
+  .template-label { color: #4dff91; }
+  #info {
+    position: absolute; bottom: 80px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.8em; color: #888; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>🏃 3D 孪生对比</h1>
+  <span class="label">动作:</span>
+  <select id="movement-select">
+    <option value="squat">深蹲</option>
+    <option value="pushup">俯卧撑</option>
+    <option value="deadlift">硬拉</option>
+  </select>
+  <button id="reset-btn" title="重置视角">🔄 重置视角</button>
+</div>
+
+<div id="status" class="disconnected">● 未连接</div>
+
+<div id="labels">
+  <span class="user-label">👤 我的动作</span>
+  <span class="template-label">📋 标准模板</span>
+</div>
+<div id="info">拖拽鼠标旋转 | 滚轮缩放 | 右键平移</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─── 常量 ────────────────────────────────────────────
+const JOINTS = [
+  "left_shoulder","right_shoulder",
+  "left_elbow","right_elbow",
+  "left_wrist","right_wrist",
+  "left_hip","right_hip",
+  "left_knee","right_knee",
+  "left_ankle","right_ankle"
+];
+
+const BONES = [
+  [0,1],[0,6],[1,7],[6,7],     // 躯干
+  [0,2],[2,4],[1,3],[3,5],     // 手臂
+  [6,8],[8,10],[7,9],[9,11]    // 腿
+];
+
+const SPHERE_RADIUS = 0.025;
+const BONE_RADIUS = 0.015;
+
+// 关节位置缩放因子 (将 MediaPipe 归一化坐标适配到 3D 场景)
+const SCALE = 2.5;
+
+// ─── 场景初始化 ─────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+scene.fog = new THREE.Fog(0x1a1a2e, 8, 25);
+
+// 网格地面
+const grid = new THREE.GridHelper(10, 20, 0x333355, 0x222244);
+scene.add(grid);
+
+// 灯光
+const ambient = new THREE.AmbientLight(0x404060, 2.5);
+scene.add(ambient);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+dirLight.position.set(5, 8, 5);
+scene.add(dirLight);
+const dirLight2 = new THREE.DirectionalLight(0x8899ff, 0.8);
+dirLight2.position.set(-3, 3, -5);
+scene.add(dirLight2);
+
+// 相机
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 50);
+camera.position.set(0, 1.8, 5.5);
+camera.lookAt(0, 0.9, 0);
+
+// 渲染器
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// 轨道控制
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.9, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 2;
+controls.maxDistance = 10;
+controls.update();
+
+// ─── 构建骨骼模型 ────────────────────────────────────
+function createSkeleton(color) {
+  const group = new THREE.Group();
+  const spheres = [];
+  const cylinders = [];
+
+  const mat = new THREE.MeshPhongMaterial({
+    color: color,
+    specular: 0x222222,
+    shininess: 40,
+  });
+  const boneMat = new THREE.MeshPhongMaterial({
+    color: color,
+    specular: 0x111111,
+    shininess: 30,
+  });
+
+  // 创建关节球
+  for (let i = 0; i < JOINTS.length; i++) {
+    const geo = new THREE.SphereGeometry(SPHERE_RADIUS, 16, 16);
+    const mesh = new THREE.Mesh(geo, mat.clone());
+    mesh.position.set(0, 0, 0);
+    group.add(mesh);
+    spheres.push(mesh);
+  }
+
+  // 创建骨骼圆柱体
+  const cylGeo = new THREE.CylinderGeometry(BONE_RADIUS, BONE_RADIUS, 1, 8);
+  for (let i = 0; i < BONES.length; i++) {
+    const mesh = new THREE.Mesh(cylGeo.clone(), boneMat.clone());
+    mesh.visible = false;  // 初始化时不可见，等有位置后再显示
+    group.add(mesh);
+    cylinders.push(mesh);
+  }
+
+  return { group, spheres, cylinders };
+}
+
+function updateBoneCylinder(cylinder, from, to) {
+  const mid = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
+  const dir = new THREE.Vector3().subVectors(to, from);
+  const length = dir.length();
+
+  if (length < 0.001) {
+    cylinder.visible = false;
+    return;
+  }
+
+  cylinder.visible = true;
+  cylinder.position.copy(mid);
+
+  // 将圆柱体对齐到 from→to 方向
+  const axis = new THREE.Vector3(0, 1, 0);
+  const quat = new THREE.Quaternion().setFromUnitVectors(
+    axis, dir.normalize()
+  );
+  cylinder.setRotationFromQuaternion(quat);
+  cylinder.scale.set(1, length, 1);
+}
+
+// ─── 两个骨骼模型 ────────────────────────────────────
+const userSkel = createSkeleton(0x4dc9f6);       // 蓝色: 用户
+const templateSkel = createSkeleton(0x4dff91);   // 绿色: 模板
+
+// 用户模型在左侧 (X < 0), 模板在右侧 (X > 0)
+userSkel.group.position.set(-1.3, 0.05, 0);
+templateSkel.group.position.set(1.3, 0.05, 0);
+
+// 添加分隔标记
+const dividerGeo = new THREE.BoxGeometry(0.02, 2.5, 0.3);
+const dividerMat = new THREE.MeshBasicMaterial({ color: 0x444466 });
+const divider = new THREE.Mesh(dividerGeo, dividerMat);
+divider.position.set(0, 1.0, 0);
+scene.add(divider);
+
+scene.add(userSkel.group);
+scene.add(templateSkel.group);
+
+// ─── 模板动画状态 ────────────────────────────────────
+let templateFrames = [];
+let templateFrameIdx = 0;
+let templateTimer = 0;
+const TEMPLATE_FPS = 30;
+
+function setTemplateFrames(frames) {
+  templateFrames = frames;
+  templateFrameIdx = 0;
+  templateTimer = 0;
+  console.log(`[Twin] 收到模板数据: ${frames.length} 帧`);
+}
+
+function animateTemplate(dt) {
+  if (templateFrames.length === 0) return;
+
+  templateTimer += dt;
+  const frameInterval = 1.0 / TEMPLATE_FPS;
+
+  while (templateTimer >= frameInterval) {
+    templateTimer -= frameInterval;
+    templateFrameIdx = (templateFrameIdx + 1) % templateFrames.length;
+  }
+
+  updateSkeletonFrom36(templateSkel, templateFrames[templateFrameIdx]);
+}
+
+// ─── 从 36 个数值更新骨骼 ──────────────────────────
+function updateSkeletonFrom36(skel, points36) {
+  if (!points36 || points36.length < 36) return;
+
+  const { spheres, cylinders } = skel;
+
+  // 计算所有关节位置
+  const positions = [];
+  for (let i = 0; i < JOINTS.length; i++) {
+    const offset = i * 3;
+    // MediaPipe 坐标: X→右, Y→上, Z→前 (朝相机)
+    // Three.js:       X→右, Y→上, Z→前 (朝屏幕外)
+    const pos = new THREE.Vector3(
+      points36[offset] * SCALE,
+      points36[offset + 1] * SCALE,
+      points36[offset + 2] * SCALE
+    );
+    positions.push(pos);
+  }
+
+  // 更新关节球位置
+  for (let i = 0; i < spheres.length; i++) {
+    spheres[i].position.copy(positions[i]);
+  }
+
+  // 更新骨骼圆柱体
+  for (let bi = 0; bi < BONES.length; bi++) {
+    const [fromIdx, toIdx] = BONES[bi];
+    updateBoneCylinder(cylinders[bi], positions[fromIdx], positions[toIdx]);
+  }
+}
+
+// ─── WebSocket 连接 ─────────────────────────────────
+const statusEl = document.getElementById('status');
+let ws = null;
+let wsReconnectTimer = null;
+
+function connectWebSocket() {
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+
+  const host = window.location.hostname || 'localhost';
+  const url = `ws://${host}:8765`;
+
+  console.log(`[Twin] 连接 WebSocket: ${url}`);
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    console.log('[Twin] WebSocket 已连接');
+    statusEl.textContent = '● 已连接';
+    statusEl.className = 'connected';
+    if (wsReconnectTimer) { clearInterval(wsReconnectTimer); wsReconnectTimer = null; }
+  };
+
+  ws.onclose = () => {
+    console.log('[Twin] WebSocket 断开, 5秒后重连...');
+    statusEl.textContent = '● 未连接 (自动重连中)';
+    statusEl.className = 'disconnected';
+    if (!wsReconnectTimer) {
+      wsReconnectTimer = setInterval(connectWebSocket, 5000);
+    }
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === 'pose') {
+        // 实时用户动作 → 更新左侧模型
+        updateSkeletonFrom36(userSkel, msg.points);
+      } else if (msg.type === 'template') {
+        // 模板数据 → 设置右侧回放
+        setTemplateFrames(msg.frames);
+      }
+    } catch (e) {
+      console.warn('[Twin] 消息解析失败:', e);
+    }
+  };
+
+  ws.onerror = () => {
+    // onclose 会处理重连
+  };
+}
+
+// ─── 渲染循环 ────────────────────────────────────────
+let lastTime = performance.now();
+let frameCount = 0;
+
+function animate(timestamp) {
+  requestAnimationFrame(animate);
+
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+  lastTime = timestamp;
+  frameCount++;
+
+  controls.update();
+
+  // 动画右侧模板
+  animateTemplate(dt);
+
+  renderer.render(scene, camera);
+}
+
+// ─── 事件处理 ────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+document.getElementById('reset-btn').addEventListener('click', () => {
+  camera.position.set(0, 1.8, 5.5);
+  controls.target.set(0, 0.9, 0);
+  controls.update();
+});
+
+document.getElementById('movement-select').addEventListener('change', (e) => {
+  console.log(`[Twin] 选择动作: ${e.target.value}`);
+  // 通知服务器切换动作模板
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'set_movement', movement: e.target.value }));
+  }
+});
+
+// ─── 启动 ────────────────────────────────────────────
+connectWebSocket();
+requestAnimationFrame(animate);
+
+console.log('[Twin] 3D 孪生对比页面已就绪');
+console.log('  左侧 (蓝色) = 用户实时动作');
+console.log('  右侧 (绿色) = 标准模板');
+
+// ─── 键盘快捷键 ──────────────────────────────────────
+window.addEventListener('keydown', (e) => {
+  switch (e.key.toLowerCase()) {
+    case 'f':  // 正面视角
+      camera.position.set(0, 0.9, 5.5);
+      controls.target.set(0, 0.9, 0);
+      break;
+    case 's':  // 侧面视角
+      camera.position.set(5, 1.2, 0);
+      controls.target.set(0, 0.9, 0);
+      break;
+    case 't':  // 顶部视角
+      camera.position.set(0, 4.5, 0.1);
+      controls.target.set(0, 0.9, 0);
+      break;
+    case 'r':  // 重置
+      camera.position.set(0, 1.8, 5.5);
+      controls.target.set(0, 0.9, 0);
+      break;
+  }
+  controls.update();
+});
+</script>
+</body>
+</html>

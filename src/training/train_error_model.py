@@ -176,6 +176,74 @@ class QualityScorerModel(nn.Module):
         return (sim + 1) * 50.0  # 映射到 [0, 100]
 
 
+class IMUActionClassifier(nn.Module):
+    """IMU动作分类器 — 1D-CNN + LSTM (研究计划书方法三).
+
+    对应计划书中描述的架构:
+      - 2层1D-CNN提取局部特征（加速度突变、角速度峰值）
+      - 1层LSTM(64单元)捕捉长期依赖
+      - FC + Softmax输出动作类别概率
+
+    Input:  (B, window_size, 6)  — accel_xyz + gyro_xyz
+    Output: (B, num_classes)
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 6,
+        hidden_dim: int = 64,
+        num_classes: int = 5,
+        lstm_units: int = 64,
+        dropout: float = 0.3,
+        window_size: int = 128,
+    ):
+        super().__init__()
+        self.window_size = window_size
+
+        # 1D-CNN blocks
+        self.conv1 = nn.Sequential(
+            nn.Conv1d(input_dim, hidden_dim, kernel_size=7, padding=3),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Dropout(dropout),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv1d(hidden_dim, hidden_dim * 2, kernel_size=5, padding=2),
+            nn.BatchNorm1d(hidden_dim * 2),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Dropout(dropout),
+        )
+
+        # LSTM for temporal dependencies
+        self.lstm = nn.LSTM(
+            hidden_dim * 2, lstm_units,
+            batch_first=True, bidirectional=True,
+            dropout=dropout,
+        )
+
+        # Classifier head
+        self.classifier = nn.Sequential(
+            nn.Linear(lstm_units * 2, 64),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(64, num_classes),
+        )
+
+    def forward(self, x):
+        # x: (B, T, 6) → (B, 6, T)
+        x = x.transpose(1, 2)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        # (B, C, T') → (B, T', C)
+        x = x.transpose(1, 2)
+        lstm_out, _ = self.lstm(x)
+        # Use final timestep
+        out = self.classifier(lstm_out[:, -1, :])
+        return out
+
+
 # ═══════════════════════════════════════════════════════════════
 # 训练函数
 # ═══════════════════════════════════════════════════════════════
@@ -323,30 +391,105 @@ def train_quality_scorer(
 # CLI入口
 # ═══════════════════════════════════════════════════════════════
 
+def train_imu_classifier(
+    model: IMUActionClassifier,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    epochs: int = 100,
+    lr: float = 1e-3,
+    device: str = "cuda",
+    save_path: str = "models/imu_classifier.pt",
+):
+    model = model.to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
+    criterion = nn.CrossEntropyLoss()
+
+    best_val_acc = 0.0
+    for epoch in range(epochs):
+        model.train()
+        train_loss = 0.0
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+            optimizer.zero_grad()
+            loss = criterion(model(x), y)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+
+        model.eval()
+        correct, total = 0, 0
+        with torch.no_grad():
+            for x, y in val_loader:
+                x, y = x.to(device), y.to(device)
+                pred = model(x).argmax(dim=-1)
+                correct += (pred == y).sum().item()
+                total += y.size(0)
+        val_acc = correct / total if total > 0 else 0
+        scheduler.step()
+
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            torch.save(model.state_dict(), save_path)
+
+        if epoch % 10 == 0:
+            print(f"Epoch {epoch:3d} | Loss: {train_loss/len(train_loader):.4f} | Val Acc: {val_acc:.4f}")
+
+    print(f"训练完成 | 最佳验证准确率: {best_val_acc:.4f}")
+    return model
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="训练健身动作分析模型")
     parser.add_argument("--model", type=str, default="phase_classifier",
-                        choices=["phase_classifier", "error_detector", "quality_scorer"])
+                        choices=["phase_classifier", "error_detector", "quality_scorer", "imu_classifier"])
     parser.add_argument("--data", type=str, required=True, help="训练数据目录")
+    parser.add_argument("--reference_dir", type=str, default="", help="参考模板目录(quality_scorer)")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--save", type=str, default="models/")
+    parser.add_argument("--num_workers", type=int, default=4)
     args = parser.parse_args()
 
-    # 数据加载器（需根据实际数据格式调整）
-    # train_loader, val_loader, test_loader = ...
+    from src.training.data_loader import create_dataloaders
 
-    # 训练
+    dataset_type = {
+        "phase_classifier": "phase",
+        "error_detector": "error",
+        "quality_scorer": "quality",
+        "imu_classifier": "imu",
+    }[args.model]
+
+    train_loader, val_loader, test_loader = create_dataloaders(
+        data_dir=args.data,
+        dataset_type=dataset_type,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        reference_dir=args.reference_dir,
+    )
+
+    save_path = os.path.join(args.save, f"{args.model}.pt")
+
     if args.model == "phase_classifier":
         model = PhaseClassifier(num_phases=5)
-        # train_phase_classifier(model, train_loader, val_loader, ...)
+        train_phase_classifier(model, train_loader, val_loader,
+                               epochs=args.epochs, lr=args.lr,
+                               device=args.device, save_path=save_path)
     elif args.model == "error_detector":
         model = ErrorDetectorModel(num_error_types=10)
-        # train_error_detector(model, train_loader, val_loader, ...)
+        train_error_detector(model, train_loader, val_loader,
+                             epochs=args.epochs, lr=args.lr,
+                             device=args.device, save_path=save_path)
     elif args.model == "quality_scorer":
         model = QualityScorerModel()
-        # train_quality_scorer(model, train_loader, val_loader, ...)
-
-    print(f"模型训练脚本就绪。请确保训练数据已放置在 {args.data}")
+        train_quality_scorer(model, train_loader, val_loader,
+                             epochs=args.epochs, lr=args.lr,
+                             device=args.device, save_path=save_path)
+    elif args.model == "imu_classifier":
+        model = IMUActionClassifier(num_classes=5)
+        train_imu_classifier(model, train_loader, val_loader,
+                             epochs=args.epochs, lr=args.lr,
+                             device=args.device, save_path=save_path)

@@ -1,5 +1,6 @@
 """标准动作动画播放器 — 在Webots中回放预设动作."""
 
+import os
 import numpy as np
 from typing import Optional
 from dataclasses import dataclass
@@ -112,6 +113,145 @@ class MotionPlayer:
         )
         player.add_clip(clip)
         return player
+
+    @classmethod
+    def from_opensim_mot(cls, mot_path: str, name: str = "") -> "MotionPlayer":
+        """从 OpenSim .mot 文件创建播放器。
+
+        解析 OpenSim IK/Forward Dynamics 输出的 .mot 文件，
+        提取关节角度时间序列，构建 MotionPlayer。
+
+        Args:
+            mot_path: OpenSim .mot 运动文件路径
+            name: 动作名称（默认取文件名）
+
+        Returns:
+            包含该运动数据的 MotionPlayer
+        """
+        from collections import OrderedDict
+
+        if not name:
+            name = os.path.splitext(os.path.basename(mot_path))[0]
+
+        # Parse .mot file
+        with open(mot_path) as f:
+            lines = f.readlines()
+
+        # Find data section
+        header_start = -1
+        data_start = -1
+        in_header = False
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.lower() == "endheader":
+                header_start = i + 1
+                break
+
+        if header_start < 0:
+            raise ValueError(f"Invalid .mot file (no endheader): {mot_path}")
+
+        # Column names line
+        headers = lines[header_start].strip().split()
+        # Next line is data
+        data_lines = []
+        for i in range(header_start + 1, len(lines)):
+            if lines[i].strip():
+                data_lines.append(lines[i].strip().split())
+
+        # Extract time and joint angles
+        n_frames = len(data_lines)
+        joint_names = [h for h in headers if h.lower() != "time"]
+        n_joints = len(joint_names)
+
+        keyframes = np.zeros((n_frames, n_joints))
+        for fi, row in enumerate(data_lines):
+            col_offset = 0
+            for ji, name in enumerate(headers):
+                if name.lower() == "time":
+                    col_offset += 1
+                    continue
+                val = float(row[ji])
+                # OpenSim uses radians, convert to degrees for consistency
+                keyframes[fi, ji - col_offset + 1] = np.degrees(val)
+
+        # Determine frame rate from time column
+        frame_rate = 30
+        time_idx = next((j for j, h in enumerate(headers) if h.lower() == "time"), -1)
+        if time_idx >= 0 and n_frames >= 2:
+            t0 = float(data_lines[0][time_idx])
+            t1 = float(data_lines[-1][time_idx])
+            if t1 > t0:
+                frame_rate = int((n_frames - 1) / (t1 - t0))
+
+        clip = MotionClip(
+            name=name,
+            joint_names=joint_names,
+            keyframes=keyframes,
+            frame_rate=frame_rate,
+            loop=True,
+        )
+        player = cls()
+        player.add_clip(clip)
+        return player
+
+    @classmethod
+    def from_npy_template(cls, npy_path: str, name: str = "") -> "MotionPlayer":
+        """从 .npy 模板文件创建播放器。
+
+        兼容 MovementLibrary 生成的参考模板格式:
+          {joint_angles: (T, N), joint_names: [...], fps: 30}
+
+        Args:
+            npy_path: .npy 模板文件路径
+            name: 动作名称
+
+        Returns:
+            MotionPlayer
+        """
+        if not name:
+            name = os.path.splitext(os.path.basename(npy_path))[0]
+
+        data = np.load(npy_path, allow_pickle=True)
+        if isinstance(data, np.ndarray):
+            # Bare array: assume (T, N) with no joint name info
+            keyframes = data
+            joint_names = [f"joint_{i}" for i in range(data.shape[1])]
+            frame_rate = 30
+        else:
+            data = data.item()
+            joint_angles = data.get("joint_angles", data.get("landmarks"))
+            joint_names = list(data.get("joint_names", []))
+            frame_rate = data.get("fps", 30)
+
+            if joint_angles.ndim == 3:
+                # (T, 33, 4) landmarks format — need to extract angles
+                # Use geometric IK to convert
+                from src.bridge.socket_server import GeometricIKSolver
+                keyframes_list = []
+                for t in range(joint_angles.shape[0]):
+                    angles = GeometricIKSolver.solve(joint_angles[t])
+                    keyframes_list.append(angles)
+                joint_names = list(keyframes_list[0].keys())
+                keyframes = np.array([
+                    [frame[name] for name in joint_names]
+                    for frame in keyframes_list
+                ])
+            else:
+                keyframes = joint_angles
+
+        clip = MotionClip(
+            name=name,
+            joint_names=joint_names,
+            keyframes=keyframes.astype(np.float32),
+            frame_rate=frame_rate,
+            loop=True,
+        )
+        player = cls()
+        player.add_clip(clip)
+        return player
+
+
 
 
 def create_squat_reference_motion() -> MotionClip:

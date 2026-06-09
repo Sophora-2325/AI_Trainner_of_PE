@@ -16,6 +16,7 @@
 import sys
 import os
 import time
+import json
 import argparse
 import signal
 import yaml
@@ -31,11 +32,15 @@ from src.pose.estimator import PoseEstimator
 from src.pose.preprocessor import LandmarkSmoother, normalize_pose, mediapipe_to_opensim_markers
 from src.pose.tracker import MovementPhaseTracker, Phase
 from src.bridge.socket_client import OpenSimClient, IKResponse
+from src.bridge.ws_server import TwinWebSocketServer
 from src.comparison.movement_library import MovementLibrary, MovementTemplate
 from src.comparison.scorer import MovementScorer, RepScore
 from src.comparison.error_detector import ErrorDetector
 from src.feedback.llm_advisor import LLMAdvisor, AdviceContext
 from src.feedback.tts_engine import TTSEngine
+from src.feedback.voice_coach import VoiceCoach
+from src.feedback.intervention_engine import InterventionEngine, InterventionLevel, InterventionResult
+from src.feedback.profile_manager import ProfileManager, SessionRecord
 from src.ui.overlay import OverlayRenderer
 from src.ui.dashboard import DashboardData, ConsoleDashboard
 from src.webots.op2_client import OP2RealtimeClient
@@ -106,6 +111,23 @@ class FitnessCoach:
             voice=tts_cfg.get("voice", "zh-CN-XiaoxiaoNeural"),
         )
 
+        # Voice coach (priority-queued announcements)
+        voice_cfg = config.get("voice", {})
+        self.voice_coach = VoiceCoach(
+            tts_engine=self.tts,
+            enabled=voice_cfg.get("enabled", True),
+            rep_summary_interval=voice_cfg.get("rep_summary_interval", 5),
+        )
+
+        # Intervention engine (3-level graded intervention)
+        self.intervention_engine: Optional[InterventionEngine] = None
+
+        # Profile manager (adaptive thresholds)
+        profile_cfg = config.get("profile", {})
+        self.profile_manager = ProfileManager(
+            profile_path=profile_cfg.get("path", "profiles/default.json")
+        )
+
         # Webots OP2 real-time client
         webots_cfg = config.get("webots", {})
         self.webots_client: Optional[OP2RealtimeClient] = None
@@ -114,6 +136,16 @@ class FitnessCoach:
                 host=webots_cfg.get("op2_host", "localhost"),
                 port=webots_cfg.get("op2_port", 10020),
             )
+
+        # WebSocket 服务器 (第5周: 3D孪生对比)
+        ws_cfg = config.get("websocket", {})
+        self.ws_server: Optional[TwinWebSocketServer] = None
+        if config.get("ws_enabled", True):
+            self.ws_server = TwinWebSocketServer(
+                host=ws_cfg.get("host", "localhost"),
+                port=ws_cfg.get("port", 8765),
+            )
+            self.ws_server.on_movement_change = self._on_frontend_movement_change
 
         # UI
         ui_cfg = config.get("ui", {})
@@ -137,12 +169,41 @@ class FitnessCoach:
         self._rep_phases: list = []      # 记录一次动作经历的阶段
         self._last_rep_end_frame = 0
         self._frame_idx = 0
+        self._last_phase = None          # track phase transitions for voice announcements
 
         # 反馈节流：每N帧或阶段切换时生成建议
         self._last_advice_frame = -60   # 至少间隔2秒
         self._last_advice = ""
 
+        # 评分历史 (第6周)
+        self._score_history: list[dict] = []
+
         print("[Coach] 初始化完成")
+
+    def _on_frontend_movement_change(self, movement: str):
+        """前端动作下拉框切换回调."""
+        print(f"[Coach] 前端切换动作: {movement}")
+
+        # 加载新模板
+        self.template = self.library.load_template(movement)
+        if self.template is None:
+            print(f"[Coach] 无法加载动作模板: {movement}")
+            return
+
+        self.movement = movement
+        self.phase_tracker.movement = movement
+
+        # 更新干预引擎
+        movement_cfg = self.library._config.get(movement, {})
+        self.intervention_engine = InterventionEngine(
+            movement=movement, rom_config=movement_cfg
+        )
+
+        # 发送新模板到前端
+        if self.ws_server and self.ws_server.connected:
+            self._send_template_to_frontend()
+
+        print(f"[Coach] 已切换到: {self.library._config.get(movement, {}).get('name', movement)}")
 
     def start(self, movement: str = "squat", video_path: str = None):
         """开始训练会话.
@@ -172,6 +233,16 @@ class FitnessCoach:
         # 更新阶段追踪器
         self.phase_tracker.movement = movement
 
+        # 初始化干预引擎
+        movement_cfg = self.library._config.get(movement, {})
+        self.intervention_engine = InterventionEngine(
+            movement=movement,
+            rom_config=movement_cfg,
+        )
+
+        # 启动语音播报
+        self.voice_coach.start()
+
         # 连接 OpenSim (可选)
         if self.use_opensim:
             ok = self.opensim_client.connect()
@@ -191,6 +262,12 @@ class FitnessCoach:
         # 加载 LLM (可选)
         if self.use_llm and self.advisor is not None:
             self.advisor.load()
+
+        # 启动 WebSocket 服务器 (第5周: 3D孪生对比)
+        if self.ws_server is not None:
+            self.ws_server.start()
+            # 发送模板数据到前端
+            self._send_template_to_frontend()
 
         # 打开视频输入（摄像头或文件）
         if self._video_mode:
@@ -241,6 +318,21 @@ class FitnessCoach:
         self.opensim_client.disconnect()
         if self.webots_client is not None:
             self.webots_client.disconnect()
+        if self.ws_server is not None:
+            self.ws_server.stop()
+        self.voice_coach.stop()
+        # Record session to profile
+        session = SessionRecord(
+            timestamp=time.time(),
+            movement=self.movement,
+            rep_count=self.rep_count,
+            avg_score=float(np.mean(self.dashboard.score_history)) if self.dashboard.score_history else 0.0,
+        )
+        self.profile_manager.record_session(session)
+
+        # 保存评分历史 (第6周)
+        self._save_score_history()
+
         print("\n[Coach] 训练结束")
 
     def _main_loop(self):
@@ -279,6 +371,10 @@ class FitnessCoach:
             # 平滑滤波
             landmarks = self.smoother.update(result.world_landmarks)
 
+            # 发送到 3D 孪生对比页面 (第5周)
+            if self.ws_server is not None and self.ws_server.connected:
+                self.ws_server.send_pose(result.world_landmarks, self._frame_idx)
+
             # ─── 2. 逆运动学求解 ──────────────────────
             joint_angles = self._solve_ik(landmarks)
 
@@ -290,6 +386,11 @@ class FitnessCoach:
 
             # ─── 3. 动作阶段检测 ──────────────────────
             phase = self.phase_tracker.update(joint_angles, landmarks)
+
+            # 阶段切换语音播报
+            if phase != self._last_phase and self._last_phase is not None:
+                self.voice_coach.announce_stage(phase.name)
+            self._last_phase = phase
 
             # 检测动作完成（深蹲：SETUP→DESCENT→BOTTOM→ASCENT→LOCKOUT）
             self._detect_rep_completion(phase)
@@ -311,10 +412,23 @@ class FitnessCoach:
             )
             self.dashboard.update(frame_score.total, joint_angles, phase)
 
-            # ─── 6. LLM 建议生成 (周期性) ──────────────
+            # ─── 6. 干预评估 ──────────────────────────
+            intervention: Optional[InterventionResult] = None
+            if self.intervention_engine is not None:
+                intervention = self.intervention_engine.evaluate(
+                    joint_angles, phase, landmarks, timestamp=time.time()
+                )
+                if intervention.level == InterventionLevel.HINT:
+                    self.voice_coach.announce_hint(intervention.message)
+                elif intervention.level == InterventionLevel.WARNING:
+                    self.voice_coach.announce_warning(intervention.message)
+                elif intervention.level == InterventionLevel.EMERGENCY:
+                    self.voice_coach.announce_emergency(intervention.message)
+
+            # ─── 7. LLM 建议生成 (周期性) ──────────────
             advice = self._maybe_generate_advice(frame_score, errors, phase)
 
-            # ─── 7. UI 渲染 ───────────────────────────
+            # ─── 8. UI 渲染 ───────────────────────────
             output = self.overlay.render(
                 frame,
                 landmarks_2d=result.landmarks_2d,
@@ -398,8 +512,27 @@ class FitnessCoach:
             if rep_score.error_summary:
                 print(f"  错误: {rep_score.error_summary}")
 
+            # Voice announcement for rep count
+            self.voice_coach.announce_rep(self.rep_count, rep_score.total)
+
             # 生成完整动作反馈
             self._generate_rep_feedback(rep_score)
+
+            # 记录评分历史 (第6周)
+            self._record_score_to_history(rep_score.total)
+
+            # 为最严重的错误播报纠正提示
+            if rep_score.error_summary:
+                sev = {"high": 0, "medium": 1, "low": 2}
+                worst = sorted(
+                    rep_score.error_summary.keys(),
+                    key=lambda eid: sev.get(
+                        next((r.get("severity", "low") for r in self.library.get_error_rules(self.movement) if r["id"] == eid), "low"),
+                        3
+                    )
+                )
+                if worst:
+                    self.voice_coach.announce_correction(worst[0])
 
             # 重置，准备下一次计数
             self.scorer.reset()
@@ -472,6 +605,60 @@ class FitnessCoach:
         self.scorer.reset()
         self.dashboard.reset()
         self._rep_phases.clear()
+
+    # ─── 第5-6周辅助方法 ──────────────────────────────────────
+
+    def _send_template_to_frontend(self):
+        """将当前动作模板发送到 3D 孪生页面."""
+        if self.ws_server is None or not self.ws_server.connected:
+            return
+        if self.template is None:
+            return
+
+        # 从模板的 joint_angle_sequence 反算关键点 或 从 JSON 加载原始关键点
+        json_path = os.path.join("templates", f"template_{self.movement}.json")
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                template_seq = json.load(f)
+            self.ws_server.send_template(template_seq)
+            print(f"[Coach] 已发送模板到前端: {self.movement}")
+        else:
+            print(f"[Coach] 模板 JSON 不存在: {json_path}")
+
+    def _record_score_to_history(self, score: float):
+        """记录一次评分到内存历史."""
+        self._score_history.append({
+            "date": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": time.time(),
+            "movement": self.movement,
+            "score": round(score, 1),
+        })
+        # 自动绘制并保存图表 (第6周)
+        if len(self._score_history) % 5 == 0:
+            self._plot_score_chart()
+
+    def _plot_score_chart(self):
+        """绘制评分历史折线图 (matplotlib)."""
+        try:
+            from scripts.score_history import plot_history
+            output = f"charts/score_{self.movement}_{len(self._score_history)}.png"
+            os.makedirs("charts", exist_ok=True)
+            plot_history(self._score_history, output_path=output)
+        except ImportError:
+            pass  # matplotlib 未安装时静默跳过
+
+    def _save_score_history(self):
+        """保存评分历史到文件."""
+        if not self._score_history:
+            return
+        try:
+            from scripts.score_history import save_history, load_history
+            existing = load_history()
+            existing.extend(self._score_history)
+            save_history(existing)
+            print(f"[Coach] 评分历史已保存 ({len(self._score_history)} 条新记录)")
+        except Exception:
+            pass
 
     @staticmethod
     def _phase_to_template_index(phase: Phase) -> int:

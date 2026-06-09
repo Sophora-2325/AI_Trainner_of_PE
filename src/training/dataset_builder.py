@@ -35,6 +35,7 @@ class SkeletonDataset(Dataset):
         config: DatasetConfig,
         phase: str = "train",    # train / val / test
         label_map: dict = None,
+        file_list: list = None,
     ):
         """
         Args:
@@ -42,20 +43,24 @@ class SkeletonDataset(Dataset):
             config: 数据集配置
             phase: train/val/test
             label_map: 动作名称→数字标签映射
+            file_list: 显式文件列表（优先级高于 data_dir glob）
         """
         self.config = config
         self.phase = phase
 
         # 加载所有 .npy 文件
         self._samples = []  # [(window, label, error_labels)]
-        self._load_data(data_dir, label_map)
+        self._load_data(data_dir, label_map, file_list)
 
         # 数据增强
         self.augment = config.augment and phase == "train"
 
-    def _load_data(self, data_dir: str, label_map: dict = None):
+    def _load_data(self, data_dir: str, label_map: dict = None, file_list: list = None):
         """加载并切分数据."""
-        npy_files = glob.glob(os.path.join(data_dir, "**/*.npy"), recursive=True)
+        if file_list is not None:
+            npy_files = file_list
+        else:
+            npy_files = glob.glob(os.path.join(data_dir, "**/*.npy"), recursive=True)
 
         for f in npy_files:
             try:
@@ -179,22 +184,13 @@ class DatasetBuilder:
 
     def _build_from_files(self, file_list: list) -> Dataset:
         """从文件列表构建数据集."""
-        # 简化: 创建一个临时SkeletonDataset
-        # 实际项目中需要重构SkeletonDataset支持文件列表参数
-        import tempfile
-        import shutil
-
-        tmpdir = tempfile.mkdtemp()
-        for f in file_list:
-            shutil.copy(f, os.path.join(tmpdir, os.path.basename(f)))
-
-        ds = SkeletonDataset(
-            tmpdir,
+        return SkeletonDataset(
+            "",
             self.config,
             phase="train",
             label_map=self.label_map,
+            file_list=file_list,
         )
-        return ds
 
     def save(self, path: str):
         """保存标签映射."""

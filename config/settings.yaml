@@ -33,6 +33,12 @@ opensim:
   scaled_model_path: "opensim_models/scaled_model.osim"
   ik_weight_file: "config/ik_weights.xml"
 
+# WebSocket (第5周: 3D孪生对比)
+websocket:
+  host: "localhost"
+  port: 8765
+ws_enabled: true              # 是否启用 WebSocket 服务
+
 # Webots
 webots:
   world_path: "webots_project/worlds/fitness_coach.wbt"

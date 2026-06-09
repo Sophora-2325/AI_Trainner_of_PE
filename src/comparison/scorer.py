@@ -1,4 +1,9 @@
-"""多维度动作质量评分引擎."""
+"""多维度动作质量评分引擎 (实时规则评分 — 第5-6周使用).
+
+与第4周 LLM 评分的区别:
+  - MovementScorer: 实时规则评分, 用于 app.py 逐帧反馈
+  - compare_with_lm(): 离线大模型评分, 用于完整动作回顾 (scripts/compare_with_lm.py)
+"""
 
 from dataclasses import dataclass, field
 from typing import Optional

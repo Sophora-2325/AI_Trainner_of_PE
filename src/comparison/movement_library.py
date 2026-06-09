@@ -51,6 +51,11 @@ class MovementLibrary:
     def load_template(self, movement: str) -> Optional[MovementTemplate]:
         """加载一个动作的标准模板.
 
+        加载顺序:
+          1. movement_data/{movement}_reference.npy (关节角度)
+          2. templates/template_{movement}.json (33关键点, 第3周格式)
+          3. 合成模板 (回退)
+
         Args:
             movement: 动作名称 (squat, deadlift, pushup, ...)
 
@@ -60,12 +65,21 @@ class MovementLibrary:
         if movement in self._templates:
             return self._templates[movement]
 
-        path = os.path.join(self.data_dir, f"{movement}_reference.npy")
-        if not os.path.exists(path):
-            print(f"[MovementLibrary] 未找到模板文件: {path}")
-            return self._generate_synthetic_template(movement)
+        # 优先 .npy 格式 (关节角度)
+        npy_path = os.path.join(self.data_dir, f"{movement}_reference.npy")
+        if os.path.exists(npy_path):
+            return self._load_npy_template(movement, npy_path)
 
-        # .npy 格式: 包含 joint_angles 和 joint_names
+        # 其次 JSON 格式 (第3周: 33关键点坐标)
+        json_path = os.path.join("templates", f"template_{movement}.json")
+        if os.path.exists(json_path):
+            return self._load_json_template(movement, json_path)
+
+        print(f"[MovementLibrary] 未找到模板文件, 使用合成模板")
+        return self._generate_synthetic_template(movement)
+
+    def _load_npy_template(self, movement: str, path: str) -> MovementTemplate:
+        """从 .npy 文件加载模板."""
         data = np.load(path, allow_pickle=True).item()
         template = MovementTemplate(
             name=movement,
@@ -76,6 +90,80 @@ class MovementLibrary:
             duration=data["joint_angles"].shape[0] / data.get("fps", 30),
         )
         self._templates[movement] = template
+        print(f"[MovementLibrary] 已加载模板 (.npy): {path}")
+        return template
+
+    def _load_json_template(self, movement: str, path: str) -> MovementTemplate:
+        """从第3周 JSON 格式 (33关键点坐标) 加载模板.
+
+        JSON → 关节角度转换使用 GeometricIKSolver.
+        """
+        import json
+        from src.bridge.socket_server import GeometricIKSolver
+
+        with open(path, "r", encoding="utf-8") as f:
+            pose_sequence = json.load(f)
+
+        # 将 JSON 关键点转为 (N, 33, 4) 数组
+        n_frames = len(pose_sequence)
+        landmarks_array = np.zeros((n_frames, 33, 4), dtype=np.float32)
+
+        mp_names = {
+            "nose": 0, "left_eye_inner": 1, "left_eye": 2, "left_eye_outer": 3,
+            "right_eye_inner": 4, "right_eye": 5, "right_eye_outer": 6,
+            "left_ear": 7, "right_ear": 8, "mouth_left": 9, "mouth_right": 10,
+            "left_shoulder": 11, "right_shoulder": 12,
+            "left_elbow": 13, "right_elbow": 14,
+            "left_wrist": 15, "right_wrist": 16,
+            "left_pinky": 17, "right_pinky": 18,
+            "left_index": 19, "right_index": 20,
+            "left_thumb": 21, "right_thumb": 22,
+            "left_hip": 23, "right_hip": 24,
+            "left_knee": 25, "right_knee": 26,
+            "left_ankle": 27, "right_ankle": 28,
+            "left_heel": 29, "right_heel": 30,
+            "left_foot_index": 31, "right_foot_index": 32,
+        }
+
+        for f, frame in enumerate(pose_sequence):
+            for name, idx in mp_names.items():
+                landmarks_array[f, idx, 0] = frame.get(f"{name}_x", 0.0)
+                landmarks_array[f, idx, 1] = frame.get(f"{name}_y", 0.0)
+                landmarks_array[f, idx, 2] = frame.get(f"{name}_z", 0.0)
+                landmarks_array[f, idx, 3] = 1.0  # visibility
+
+        # 逐帧求解 IK → 关节角度
+        all_angles = []
+        for f in range(n_frames):
+            angles = GeometricIKSolver.solve(landmarks_array[f])
+            all_angles.append(angles)
+
+        # 提取配置中的 key_joints
+        cfg = self._config.get(movement, {})
+        joint_names = cfg.get("key_joints", list(all_angles[0].keys()))
+
+        # 构建 (T, J) 矩阵
+        angles_matrix = np.zeros((n_frames, len(joint_names)))
+        for f, angles in enumerate(all_angles):
+            for j, name in enumerate(joint_names):
+                angles_matrix[f, j] = angles.get(name, 0.0)
+
+        template = MovementTemplate(
+            name=movement,
+            joint_angle_sequence=angles_matrix,
+            joint_names=joint_names,
+            phase_boundaries=[
+                (0, int(n_frames * 0.2), 0),
+                (int(n_frames * 0.2), int(n_frames * 0.5), 1),
+                (int(n_frames * 0.5), int(n_frames * 0.55), 2),
+                (int(n_frames * 0.55), int(n_frames * 0.85), 3),
+                (int(n_frames * 0.85), n_frames - 1, 4),
+            ],
+            frame_rate=30,
+            duration=n_frames / 30.0,
+        )
+        self._templates[movement] = template
+        print(f"[MovementLibrary] 已加载模板 (JSON→IK): {path}, {n_frames}帧")
         return template
 
     def _generate_synthetic_template(self, movement: str) -> Optional[MovementTemplate]:

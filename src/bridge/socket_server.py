@@ -62,6 +62,23 @@ class GeometricIKSolver:
             )))
             angles["lumbar_extension"] = 180.0 - lumbar_angle
 
+        # 颈部偏航角度（头部左右转动）
+        mid_shoulder = (pts[11] + pts[12]) / 2.0
+        nose_rel = pts[0] - mid_shoulder
+        neck_yaw = np.degrees(np.arctan2(nose_rel[0], -nose_rel[2] + 1e-9))
+        angles["neck_yaw"] = float(neck_yaw)
+
+        # 头部俯仰角度（头部上下倾斜）
+        mid_ear = (pts[7] + pts[8]) / 2.0
+        facing_vec = pts[0] - mid_ear
+        horiz_mag = np.linalg.norm([facing_vec[0], facing_vec[2]])
+        head_pitch = np.degrees(np.arctan2(facing_vec[1], horiz_mag + 1e-9))
+        angles["head_pitch"] = float(head_pitch)
+
+        # 肩外展角度（手臂侧向抬起）
+        angles["shoulder_abduction_r"] = _calc_shoulder_abduction(pts, 12, 14)
+        angles["shoulder_abduction_l"] = _calc_shoulder_abduction(pts, 11, 13)
+
         # 膝外翻角度（膝-踝连线与垂直面的偏离）
         angles["knee_valgus_angle_r"] = _calc_valgus(pts, 24, 26, 28)
         angles["knee_valgus_angle_l"] = _calc_valgus(pts, 23, 25, 27)
@@ -69,6 +86,15 @@ class GeometricIKSolver:
         # 髋外展角度
         angles["hip_abduction_r"] = _calc_abduction(pts, 24, 26, 12)
         angles["hip_abduction_l"] = _calc_abduction(pts, 23, 25, 11)
+
+        # 躯干旋转角度（肩部连线相对于骨盆连线的水平旋转）
+        shoulder_mid = (pts[11] + pts[12]) / 2.0
+        hip_mid = (pts[23] + pts[24]) / 2.0
+        shoulder_vec = pts[12] - pts[11]  # right shoulder → left shoulder
+        hip_vec = pts[24] - pts[23]        # right hip → left hip
+        shoulder_yaw = np.degrees(np.arctan2(shoulder_vec[0], shoulder_vec[2] + 1e-9))
+        hip_yaw = np.degrees(np.arctan2(hip_vec[0], hip_vec[2] + 1e-9))
+        angles["torso_rotation"] = shoulder_yaw - hip_yaw
 
         # 对称性指标
         angles["knee_symmetry"] = abs(angles["knee_angle_r"] - angles["knee_angle_l"])
@@ -81,12 +107,23 @@ class GeometricIKSolver:
 
 
 class OpenSimIKSolver:
-    """基于 OpenSim Python API 的精确 IK 求解器."""
+    """基于 OpenSim Python API 的精确 IK 求解器.
+
+    完整流程:
+      1. 加载 .osim 模型
+      2. 将 MediaPipe landmarks 映射为 OpenSim MarkerSet
+      3. 配置 IKTool (权重、精度)
+      4. 运行 IK 求解 → 输出关节角度
+
+    当 OpenSim API 不可用时，回退到 GeometricIKSolver。
+    """
 
     def __init__(self, model_path: str):
         self.model_path = model_path
         self._model = None
         self._initialized = False
+        self._marker_weights: dict[str, float] = {}
+        self._ik_tool = None
 
     def initialize(self) -> bool:
         """加载 OpenSim 模型并初始化 IK 工具."""
@@ -94,7 +131,20 @@ class OpenSimIKSolver:
             import opensim
             self._model = opensim.Model(self.model_path)
             self._model.initSystem()
+
+            # 获取模型中的 marker 名称，设置权重
+            marker_set = self._model.getMarkerSet()
+            for i in range(marker_set.getSize()):
+                marker = marker_set.get(i)
+                name = marker.getName()
+                # 躯干和骨盆标记点权重更高
+                if any(k in name.lower() for k in ["torso", "pelvis", "sacrum", "sternum"]):
+                    self._marker_weights[name] = 10.0
+                else:
+                    self._marker_weights[name] = 1.0
+
             self._initialized = True
+            print(f"[IKServer] OpenSim 模型已加载: {len(self._marker_weights)} 个标记点")
             return True
         except ImportError:
             print("[IKServer] OpenSim Python API 不可用，将使用几何方法回退")
@@ -104,13 +154,154 @@ class OpenSimIKSolver:
             return False
 
     def solve(self, landmarks: np.ndarray) -> dict:
-        """使用 OpenSim IK 求解关节角度."""
+        """使用 OpenSim IK 求解关节角度.
+
+        Args:
+            landmarks: (33, 4) MediaPipe world landmarks
+
+        Returns:
+            {joint_name: angle_deg} 关节角度字典
+        """
         if not self._initialized:
-            # 回退到几何方法
             return GeometricIKSolver.solve(landmarks)
-        # OpenSim IK 求解（需要将 landmarks 映射到 marker set）
-        # TODO: 完整的 OpenSim IK 流程
-        return GeometricIKSolver.solve(landmarks)
+
+        try:
+            import opensim
+
+            # 1. 将 landmarks 映射为 OpenSim marker 位置
+            marker_positions = self._landmarks_to_markers(landmarks)
+
+            # 2. 构建 IK 工具
+            ik_tool = opensim.InverseKinematicsTool()
+            ik_tool.setModel(self._model)
+
+            # 创建临时 marker 数据文件 (.trc)
+            import tempfile
+            trc_path = tempfile.mktemp(suffix=".trc")
+            self._write_trc(trc_path, marker_positions)
+            ik_tool.setMarkerDataFileName(trc_path)
+
+            # 设置输出
+            mot_path = tempfile.mktemp(suffix=".mot")
+            ik_tool.setOutputMotionFileName(mot_path)
+
+            # 设置时间范围（单帧）
+            ik_tool.setStartTime(0.0)
+            ik_tool.setEndTime(0.01)
+
+            # 3. 运行 IK
+            ik_tool.run()
+
+            # 4. 读取结果
+            result = self._read_mot_result(mot_path)
+
+            # 清理临时文件
+            try:
+                os.unlink(trc_path)
+                os.unlink(mot_path)
+            except Exception:
+                pass
+
+            return result if result else GeometricIKSolver.solve(landmarks)
+
+        except Exception as e:
+            print(f"[IKServer] OpenSim IK 求解失败: {e}")
+            return GeometricIKSolver.solve(landmarks)
+
+    def _landmarks_to_markers(self, landmarks: np.ndarray) -> dict:
+        """将 MediaPipe 33 关键点映射到 OpenSim marker 位置.
+
+        使用简化的映射表（MediaPipe ID → OpenSim marker name）。
+        完整的映射需要根据具体 .osim 模型的 marker set 调整。
+        """
+        pts = landmarks[:, :3]
+
+        # MediaPipe landmark → OpenSim marker 近似映射
+        # 实际使用时需要校准：将世界坐标缩放到模型坐标系
+        mapping = {
+            0:  "nose",
+            7:  "L_ear",      8:  "R_ear",
+            11: "L_shoulder", 12: "R_shoulder",
+            13: "L_elbow",    14: "R_elbow",
+            15: "L_wrist",    16: "R_wrist",
+            23: "L_hip",      24: "R_hip",
+            25: "L_knee",     26: "R_knee",
+            27: "L_ankle",    28: "R_ankle",
+            29: "L_heel",     30: "R_heel",
+            31: "L_toe",      32: "R_toe",
+        }
+
+        # 缩放因子：MediaPipe 世界坐标 → OpenSim 模型坐标（米）
+        # MediaPipe 世界坐标以髋部中心为原点，单位大致为米
+        scale = 1.0
+
+        marker_pos = {}
+        for mp_id, marker_name in mapping.items():
+            if marker_name in self._marker_weights:
+                marker_pos[marker_name] = pts[mp_id] * scale
+
+        return marker_pos
+
+    @staticmethod
+    def _write_trc(filepath: str, marker_positions: dict):
+        """写入 TRC 格式的 marker 轨迹文件（单帧）."""
+        marker_names = list(marker_positions.keys())
+        n_markers = len(marker_names)
+
+        with open(filepath, "w") as f:
+            # Header
+            f.write("PathFileType\t4\t(X/Y/Z)\t临时.trc\n")
+            f.write(f"DataRate\tCameraRate\tNumFrames\tNumMarkers\t"
+                    f"Units\tOrigDataRate\tOrigDataStartFrame\tOrigNumFrames\n")
+            f.write(f"100.0\t100.0\t1\t{n_markers}\tm\t100.0\t1\t1\n")
+
+            # Column headers
+            f.write("Frame#\tTime\t")
+            for name in marker_names:
+                f.write(f"{name}_X\t{name}_Y\t{name}_Z\t")
+            f.write("\n")
+
+            # Data row (frame 1, time 0)
+            f.write("1\t0.0000\t")
+            for name in marker_names:
+                pos = marker_positions[name]
+                f.write(f"{pos[0]:.6f}\t{pos[1]:.6f}\t{pos[2]:.6f}\t")
+            f.write("\n")
+
+    @staticmethod
+    def _read_mot_result(filepath: str) -> dict:
+        """读取 OpenSim IK 输出的 .mot 文件，提取关节角度."""
+        import re
+        angles = {}
+
+        try:
+            with open(filepath) as f:
+                lines = f.readlines()
+
+            # 查找数据行
+            in_data = False
+            headers = []
+            for line in lines:
+                line = line.strip()
+                if line.lower().startswith("time"):
+                    headers = line.split()
+                    in_data = True
+                    continue
+                if in_data and line:
+                    values = line.split()
+                    for i, name in enumerate(headers):
+                        if name.lower() != "time" and i < len(values):
+                            # 将 OpenSim 弧度转为度
+                            try:
+                                angles[name] = float(np.degrees(float(values[i])))
+                            except ValueError:
+                                pass
+                    break  # 只读第一帧
+
+        except Exception as e:
+            print(f"[IKServer] 读取 .mot 失败: {e}")
+
+        return angles
 
 
 class OpenSimServer:
@@ -313,6 +504,22 @@ def _calc_abduction(pts: np.ndarray, hip: int, knee: int, shoulder: int) -> floa
     # 大腿与垂直线的夹角在冠状面的分量
     angle = np.degrees(np.arccos(np.clip(np.dot(thigh_unit, vertical), -1, 1)))
     return float(angle)
+
+
+def _calc_shoulder_abduction(pts: np.ndarray, shoulder: int, elbow: int) -> float:
+    """计算肩外展角度（手臂在冠状面内离开身体垂线的角度）."""
+    shoulder_p = pts[shoulder]
+    elbow_p = pts[elbow]
+    arm_vec = elbow_p - shoulder_p
+    body_vertical = np.array([0, -1, 0])
+
+    norm_arm = np.linalg.norm(arm_vec)
+    if norm_arm < 1e-9:
+        return 0.0
+    arm_unit = arm_vec / norm_arm
+
+    cos_angle = np.clip(np.dot(arm_unit, body_vertical), -1, 1)
+    return float(np.degrees(np.arccos(cos_angle)))
 
 
 def _estimate_torque(
