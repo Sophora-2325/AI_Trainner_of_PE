@@ -697,7 +697,7 @@ def load_config(config_path: str = "config/settings.yaml") -> dict:
 def main():
     parser = argparse.ArgumentParser(description="AI 健身教练")
     parser.add_argument("--movement", "-m", type=str, default="squat",
-                        choices=["squat", "deadlift", "pushup", "pullup", "plank"],
+                        choices=["squat", "deadlift", "pushup", "pullup", "plank", "shooting"],
                         help="训练动作 (默认: squat)")
     parser.add_argument("--config", "-c", type=str, default="config/settings.yaml",
                         help="配置文件路径")

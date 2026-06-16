@@ -215,3 +215,57 @@ plank:
       condition: "scapula_position > 0.03"
       severity: low
       advice: "肩胛骨收紧，保持上背稳定"
+
+shooting:
+  name: "投篮"
+  name_en: "Basketball Shooting"
+  phases:
+    - SETUP               # 准备姿势 (屈膝持球)
+    - DESCENT             # 屈膝下沉+举球
+    - BOTTOM              # 最低点/起跳点
+    - ASCENT              # 蹬伸+出手
+    - LOCKOUT             # 跟随动作 (手臂伸展)
+  key_joints:
+    - elbow_angle_r
+    - shoulder_angle_r
+    - wrist_angle_r
+    - knee_angle_r
+    - knee_angle_l
+    - hip_flexion_r
+    - hip_flexion_l
+  rom:
+    elbow_angle:    { min: 30, max: 180 }    # 从屈肘到完全伸展
+    shoulder_angle: { min: 30, max: 170 }    # 肩关节前屈
+    knee_angle:     { min: 60, max: 180 }    # 屈膝发力
+    wrist_angle:    { min: -20, max: 45 }    # 压腕角度
+  errors:
+    - id: elbow_flare
+      name: "投篮肘外翻"
+      condition: "elbow_abduction > 25"
+      severity: high
+      advice: "手肘内收，对准篮筐方向"
+    - id: guide_hand_thumb
+      name: "辅手拇指发力"
+      condition: "off_hand_force > 0.3"
+      severity: medium
+      advice: "辅手轻扶球侧，不要用拇指拨球"
+    - id: no_follow_through
+      name: "未完成跟随动作"
+      condition: "elbow_angle > 160 and wrist_angle < 10 and phase == LOCKOUT"
+      severity: medium
+      advice: "出手后保持手臂伸展，手腕自然下压"
+    - id: low_arc
+      name: "投篮弧度不足"
+      condition: "release_angle < 40"
+      severity: high
+      advice: "提高出手角度，让球有更高的弧线"
+    - id: shoot_on_descent
+      name: "身体下降时出手"
+      condition: "knee_angle_decreasing and phase == DESCENT"
+      severity: medium
+      advice: "在腿部蹬伸发力时同步出手"
+    - id: inconsistent_pocket
+      name: "举球路线偏移"
+      condition: "ball_path_deviation > 0.08"
+      severity: low
+      advice: "保持举球路线紧凑，从髋部直线上举"

@@ -22,6 +22,7 @@ MOVEMENT_PHASES = {
     "pushup":   [Phase.SETUP, Phase.DESCENT, Phase.BOTTOM, Phase.ASCENT, Phase.LOCKOUT],
     "pullup":   [Phase.SETUP, Phase.DESCENT, Phase.BOTTOM, Phase.ASCENT, Phase.LOCKOUT],
     "plank":    [Phase.SETUP],
+    "shooting": [Phase.SETUP, Phase.DESCENT, Phase.BOTTOM, Phase.ASCENT, Phase.LOCKOUT],
 }
 
 
@@ -53,8 +54,8 @@ class MovementPhaseTracker:
         self._angle_history = []
         self._max_history = 10
 
-        # 深蹲/硬拉用膝角，俯卧撑用肘角
-        self._primary_joint = "knee" if movement in ("squat", "deadlift") else "elbow"
+        # 深蹲/硬拉/投篮用膝角，俯卧撑/引体向上用肘角，平板支撑用核心
+        self._primary_joint = "knee" if movement in ("squat", "deadlift", "shooting") else "elbow"
 
     def update(
         self,

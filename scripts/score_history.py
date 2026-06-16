@@ -152,7 +152,7 @@ def plot_history(history: list[dict] = None, output_path: str = None,
 
 def _movement_name(m: str) -> str:
     names = {"squat": "深蹲", "pushup": "俯卧撑", "deadlift": "硬拉",
-             "pullup": "引体向上", "plank": "平板支撑"}
+             "pullup": "引体向上", "plank": "平板支撑", "shooting": "投篮"}
     return names.get(m, m)
 
 

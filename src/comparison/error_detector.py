@@ -146,6 +146,8 @@ class ErrorDetector:
             errors.extend(self._heuristic_pullup(angles, pts, phase))
         elif movement == "plank":
             errors.extend(self._heuristic_plank(angles, pts, phase))
+        elif movement == "shooting":
+            errors.extend(self._heuristic_shooting(angles, pts, phase))
 
         return errors
 
@@ -269,7 +271,7 @@ class ErrorDetector:
         errors = []
 
         elbow_r = angles.get("elbow_angle_r", 180)
-        if elbow_r > 45 and phase == Phase.TOP:
+        if elbow_r > 45 and phase == Phase.BOTTOM:
             errors.append(MovementError(
                 id="half_rep", name="幅度不够",
                 severity="high", advice="拉至下巴过杠",
@@ -300,6 +302,41 @@ class ErrorDetector:
                 id="hip_sag", name="髋部下塌",
                 severity="high", advice="收紧臀部，抬高髋部至与肩同高",
                 current_value=hip_drop, threshold=0.04,
+            ))
+
+        return errors
+
+    def _heuristic_shooting(
+        self, angles: dict, pts: np.ndarray, phase: Phase
+    ) -> list[MovementError]:
+        """投篮专项错误检测."""
+        errors = []
+
+        # 肘外翻检测 (投篮手 — 右侧)
+        elbow_flare_r = self._calc_elbow_flare(pts, side="right")
+        if elbow_flare_r > 25 and phase in (Phase.DESCENT, Phase.ASCENT):
+            errors.append(MovementError(
+                id="elbow_flare", name="投篮肘外翻",
+                severity="high", advice="手肘内收，对准篮筐方向",
+                current_value=elbow_flare_r, threshold=25,
+            ))
+
+        # 未完成跟随动作
+        elbow_angle = angles.get("elbow_angle_r", 0)
+        if elbow_angle > 160 and abs(angles.get("wrist_angle_r", 0)) < 10 and phase == Phase.LOCKOUT:
+            errors.append(MovementError(
+                id="no_follow_through", name="未完成跟随动作",
+                severity="medium", advice="出手后保持手臂伸展，手腕自然下压",
+                current_value=elbow_angle, threshold=160,
+            ))
+
+        # 身体下降时出手 (膝角还在减小但没有上升)
+        knee_angle = angles.get("knee_angle_r", 180)
+        if knee_angle < 120 and phase == Phase.ASCENT:
+            errors.append(MovementError(
+                id="shoot_on_descent", name="身体下降时出手",
+                severity="medium", advice="在腿部蹬伸发力时同步出手",
+                current_value=knee_angle, threshold=120,
             ))
 
         return errors
