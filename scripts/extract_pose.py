@@ -15,7 +15,6 @@ import os
 import sys
 
 import cv2
-import mediapipe as mp
 import numpy as np
 
 # MediaPipe Pose 33个关键点名称 (按索引顺序)
@@ -38,16 +37,20 @@ LANDMARK_NAMES = [
     "left_foot_index", "right_foot_index",
 ]
 
-mp_pose = mp.solutions.pose
 
-
-def extract_pose(video_path: str, output_path: str = None, skip_frames: int = 10) -> list[dict]:
+def extract_pose(
+    video_path: str,
+    output_path: str = None,
+    skip_frames: int = 10,
+    coord_space: str = "image",
+) -> list[dict]:
     """从视频中提取姿态关键点序列.
 
     Args:
         video_path: 输入视频路径
-        output_path: 输出 JSON 路径 (不指定则自动生成)
-        skip_frames: 下采样间隔 (每N帧保存一次)
+        output_path: 输出 JSON 路径
+        skip_frames: 下采样间隔
+        coord_space: image=屏幕归一化(0~1, 供 LLM 评分) / world=3D世界坐标(供 3D孪生模板)
 
     Returns:
         关键点序列列表
@@ -64,41 +67,36 @@ def extract_pose(video_path: str, output_path: str = None, skip_frames: int = 10
     fps = cap.get(cv2.CAP_PROP_FPS)
     print(f"[extract_pose] 视频信息: {total_frames} 帧, {fps:.1f} fps")
     print(f"[extract_pose] 下采样间隔: 每 {skip_frames} 帧保存一次")
+    print(f"[extract_pose] 坐标系: {coord_space} ({'3D孪生模板' if coord_space == 'world' else 'LLM评分'})")
 
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    from src.pose.estimator import PoseEstimator
+
+    estimator = PoseEstimator(model_complexity=1)
     pose_sequence = []
     frame_idx = 0
     saved_count = 0
 
-    with mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=2,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    ) as pose:
-
+    try:
         while cap.isOpened():
             success, image = cap.read()
             if not success:
                 break
 
-            # 每 skip_frames 帧处理一次
             if frame_idx % skip_frames != 0:
                 frame_idx += 1
                 continue
 
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            results = pose.process(image_rgb)
+            result = estimator.detect(image_rgb)
 
-            if results.pose_landmarks:
+            if result.detected:
+                landmarks = result.world_landmarks if coord_space == "world" else result.landmarks_3d
                 frame_data = {"frame": frame_idx}
-
-                for i, lm in enumerate(results.pose_landmarks.landmark):
-                    name = LANDMARK_NAMES[i]
-                    # 使用归一化坐标 (0~1 范围), z 为相对深度
-                    frame_data[f"{name}_x"] = round(lm.x, 6)
-                    frame_data[f"{name}_y"] = round(lm.y, 6)
-                    frame_data[f"{name}_z"] = round(lm.z, 6)
-
+                for i, name in enumerate(LANDMARK_NAMES):
+                    frame_data[f"{name}_x"] = round(float(landmarks[i, 0]), 6)
+                    frame_data[f"{name}_y"] = round(float(landmarks[i, 1]), 6)
+                    frame_data[f"{name}_z"] = round(float(landmarks[i, 2]), 6)
                 pose_sequence.append(frame_data)
                 saved_count += 1
 
@@ -107,8 +105,9 @@ def extract_pose(video_path: str, output_path: str = None, skip_frames: int = 10
             if frame_idx % 100 == 0:
                 print(f"  [extract_pose] 已处理 {frame_idx}/{total_frames} 帧, "
                       f"已保存 {saved_count} 帧关键点")
-
-    cap.release()
+    finally:
+        estimator.close()
+        cap.release()
 
     # 保存 JSON
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
@@ -143,13 +142,15 @@ def main():
                         help="输出 JSON 路径 (默认: {视频名}_pose.json)")
     parser.add_argument("--skip", "-s", type=int, default=10,
                         help="下采样间隔, 每N帧保存一次 (默认: 10)")
+    parser.add_argument("--space", choices=["image", "world"], default="image",
+                        help="image=屏幕归一化(LLM); world=3D世界坐标(3D孪生模板, 默认image)")
     args = parser.parse_args()
 
     if not os.path.exists(args.video):
         print(f"错误: 视频文件不存在: {args.video}")
         sys.exit(1)
 
-    extract_pose(args.video, args.output, args.skip)
+    extract_pose(args.video, args.output, args.skip, args.space)
 
 
 if __name__ == "__main__":

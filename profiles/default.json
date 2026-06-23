@@ -1,0 +1,112 @@
+{
+  "user_id": "default",
+  "created_at": 1782175908.7941735,
+  "sessions": [
+    {
+      "timestamp": 1782175958.02635,
+      "movement": "shooting",
+      "rep_count": 2,
+      "avg_score": 23.572505620949208,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782175958.0669148,
+      "movement": "shooting",
+      "rep_count": 2,
+      "avg_score": 23.613181966208,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782175958.0689323,
+      "movement": "shooting",
+      "rep_count": 2,
+      "avg_score": 23.613181966208,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782176146.1652882,
+      "movement": "pushup",
+      "rep_count": 0,
+      "avg_score": 32.67427094934161,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782176146.2201664,
+      "movement": "pushup",
+      "rep_count": 0,
+      "avg_score": 32.50585745976735,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782176146.2212827,
+      "movement": "pushup",
+      "rep_count": 0,
+      "avg_score": 32.50585745976735,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782176488.8284078,
+      "movement": "pushup",
+      "rep_count": 1,
+      "avg_score": 20.81659529057627,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782176488.8736842,
+      "movement": "pushup",
+      "rep_count": 1,
+      "avg_score": 20.81659529057627,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782176488.8766835,
+      "movement": "pushup",
+      "rep_count": 1,
+      "avg_score": 20.81659529057627,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782176576.3320913,
+      "movement": "squat",
+      "rep_count": 2,
+      "avg_score": 23.290423601221324,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782176576.384071,
+      "movement": "squat",
+      "rep_count": 2,
+      "avg_score": 23.190625939656652,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782176576.3860638,
+      "movement": "squat",
+      "rep_count": 2,
+      "avg_score": 23.190625939656652,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782177235.521569,
+      "movement": "pushup",
+      "rep_count": 1,
+      "avg_score": 26.60237534511904,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782177235.5890925,
+      "movement": "pushup",
+      "rep_count": 1,
+      "avg_score": 26.51845776384668,
+      "joint_rom": {}
+    },
+    {
+      "timestamp": 1782177235.590951,
+      "movement": "pushup",
+      "rep_count": 1,
+      "avg_score": 26.51845776384668,
+      "joint_rom": {}
+    }
+  ],
+  "custom_thresholds": {}
+}

@@ -76,141 +76,33 @@ def _vec(x: float, y: float, z: float) -> np.ndarray:
     return np.array([x, y, z], dtype=np.float64)
 
 
-def _build_squat_landmarks(num_frames: int = 90) -> list[dict]:
-    """使用正向运动学构建标准深蹲的 33 关键点序列.
-
-    核心关节角度:
-      - 膝角: 180°(直立) → 95°(底部) → 180°
-      - 髋角: 180° → 60° → 180°
-      - 踝角: 90° → 70° → 90°
-    """
+def _build_from_keyframes(
+    stand: dict[str, tuple[float, float, float]],
+    bottom: dict[str, tuple[float, float, float]],
+    num_frames: int = 90,
+) -> list[dict]:
+    """在两个关键姿态之间插值，生成完整周期 (MediaPipe world 坐标)."""
     t = np.linspace(0, 1, num_frames)
-    p = BODY_PROPS
-
-    # 关节角度轨迹 (度)
-    knee_deg = _smooth_valley(t, 180.0, 95.0)
-    hip_deg = _smooth_valley(t, 180.0, 60.0)
-    ankle_deg = _smooth_valley(t, 90.0, 70.0)
-    arm_fwd_deg = _smooth_valley(t, 0.0, 55.0)
+    alpha = _smooth_valley(t, 0.0, 1.0)
 
     sequence = []
-
     for f in range(num_frames):
-        ka = math.radians(knee_deg[f])
-        ha = math.radians(hip_deg[f])
-        aa = math.radians(ankle_deg[f])
-        af = math.radians(arm_fwd_deg[f])
-
-        # ─── 骨盆 — 随下蹲降低 ──────────────────────
-        squat_fraction = 1.0 - (hip_deg[f] / 180.0)
-        pelvis_y = 1.0 - squat_fraction * 0.42
-        pelvis = _vec(0.0, pelvis_y, 0.0)
-
-        # ─── 躯干倾斜 ──────────────────────────────
-        torso_lean = math.radians((180.0 - hip_deg[f]) * 0.28)
-        spine_top = pelvis + _vec(
-            math.sin(torso_lean) * p["torso_length"],
-            math.cos(torso_lean) * p["torso_length"],
-            0.0,
-        )
-
-        # ─── 头颈 ──────────────────────────────────
-        neck = spine_top + _vec(0.0, p["neck_length"], 0.0)
-        head_center = neck + _vec(0.0, p["head_radius"] * 1.5, 0.0)
-        nose = head_center + _vec(0.0, p["head_radius"], p["head_radius"] * 0.5)
-
-        # 面部点 (在头部球面附近分布)
-        le = head_center + _vec( p["head_radius"] * 0.3,  p["head_radius"] * 1.0, p["head_radius"] * 0.8)
-        re = head_center + _vec(-p["head_radius"] * 0.3,  p["head_radius"] * 1.0, p["head_radius"] * 0.8)
-        le_i = head_center + _vec( p["head_radius"] * 0.1,  p["head_radius"] * 1.0, p["head_radius"] * 0.8)
-        re_i = head_center + _vec(-p["head_radius"] * 0.1,  p["head_radius"] * 1.0, p["head_radius"] * 0.8)
-        le_o = head_center + _vec( p["head_radius"] * 0.5,  p["head_radius"] * 1.0, p["head_radius"] * 0.7)
-        re_o = head_center + _vec(-p["head_radius"] * 0.5,  p["head_radius"] * 1.0, p["head_radius"] * 0.7)
-        lear = head_center + _vec( p["head_radius"] * 0.9,  p["head_radius"] * 0.4, 0.0)
-        rear = head_center + _vec(-p["head_radius"] * 0.9,  p["head_radius"] * 0.4, 0.0)
-        ml = head_center + _vec( p["head_radius"] * 0.25, p["head_radius"] * 0.5, p["head_radius"] * 0.9)
-        mr = head_center + _vec(-p["head_radius"] * 0.25, p["head_radius"] * 0.5, p["head_radius"] * 0.9)
-
-        # ─── 肩部 ──────────────────────────────────
-        half_sw = p["shoulder_width"] / 2.0
-        LShoulder = _vec( half_sw, spine_top[1] - 0.02, 0.0)
-        RShoulder = _vec(-half_sw, spine_top[1] - 0.02, 0.0)
-
-        # ─── 手臂 (前伸保持平衡) ───────────────────
-        arm_dir = _vec(math.sin(af), -math.cos(af) * 0.25, math.cos(af))
-        LElbow = LShoulder + arm_dir * p["upper_arm"]
-        RElbow = RShoulder + arm_dir * p["upper_arm"]
-        LWrist = LElbow + arm_dir * p["lower_arm"]
-        RWrist = RElbow + arm_dir * p["lower_arm"]
-
-        LPinky = LWrist + _vec( 0.03, -0.01, 0.03)
-        RPinky = RWrist + _vec(-0.03, -0.01, 0.03)
-        LIndex = LWrist + _vec( 0.005, -0.01, 0.05)
-        RIndex = RWrist + _vec(-0.005, -0.01, 0.05)
-        LThumb = LWrist + _vec(-0.03,  0.005, 0.02)
-        RThumb = RWrist + _vec( 0.03,  0.005, 0.02)
-
-        # ─── 髋部 ──────────────────────────────────
-        half_hw = p["hip_width"] / 2.0
-        LHip = _vec( half_hw, pelvis_y, -0.02)
-        RHip = _vec(-half_hw, pelvis_y, -0.02)
-
-        # ─── 大腿 ──────────────────────────────────
-        thigh_angle_vert = math.pi - ha
-        thigh_dir = _vec(
-            math.sin(torso_lean + thigh_angle_vert * 0.45),
-            -math.cos(thigh_angle_vert * 0.75),
-            0.02,
-        )
-        LKnee = LHip + thigh_dir * p["upper_leg"]
-        RKnee = RHip + thigh_dir * p["upper_leg"]
-
-        # ─── 小腿 ──────────────────────────────────
-        shank_angle = math.pi - ka
-        shank_dir = _vec(
-            thigh_dir[0] + math.sin(shank_angle - thigh_angle_vert * 0.4) * 0.25,
-            thigh_dir[1] - math.cos(shank_angle) * 0.75,
-            0.0,
-        )
-        LAnkle = LKnee + shank_dir * p["lower_leg"]
-        RAnkle = RKnee + shank_dir * p["lower_leg"]
-
-        # ─── 足部 ──────────────────────────────────
-        LHeel = LAnkle + _vec(0.0, -p["foot_length"] * 0.25, -p["foot_length"] * 0.4)
-        RHeel = RAnkle + _vec(0.0, -p["foot_length"] * 0.25, -p["foot_length"] * 0.4)
-        LFootIdx = LAnkle + _vec(0.0, -p["foot_length"] * 0.05,  p["foot_length"] * 0.6)
-        RFootIdx = RAnkle + _vec(0.0, -p["foot_length"] * 0.05,  p["foot_length"] * 0.6)
-
-        # ─── 按 MediaPipe 索引顺序组装 ──────────────
-        pts = [
-            nose,                                                              # 0
-            le_i, le, le_o,                                                    # 1-3
-            re_i, re, re_o,                                                    # 4-6
-            lear, rear,                                                        # 7-8
-            ml, mr,                                                            # 9-10
-            LShoulder, RShoulder,                                              # 11-12
-            LElbow, RElbow,                                                    # 13-14
-            LWrist, RWrist,                                                    # 15-16
-            LPinky, RPinky,                                                    # 17-18
-            LIndex, RIndex,                                                    # 19-20
-            LThumb, RThumb,                                                    # 21-22
-            LHip, RHip,                                                        # 23-24
-            LKnee, RKnee,                                                      # 25-26
-            LAnkle, RAnkle,                                                    # 27-28
-            LHeel, RHeel,                                                      # 29-30
-            LFootIdx, RFootIdx,                                                # 31-32
-        ]
-
+        a = float(alpha[f])
         frame_data = {"frame": f}
-        for i, name in enumerate(LANDMARK_NAMES):
-            pt = pts[i]
-            frame_data[f"{name}_x"] = round(float(pt[0]), 6)
-            frame_data[f"{name}_y"] = round(float(pt[1]), 6)
-            frame_data[f"{name}_z"] = round(float(pt[2]), 6)
-
+        for name in LANDMARK_NAMES:
+            sx, sy, sz = stand[name]
+            bx, by, bz = bottom[name]
+            frame_data[f"{name}_x"] = round(sx + a * (bx - sx), 6)
+            frame_data[f"{name}_y"] = round(sy + a * (by - sy), 6)
+            frame_data[f"{name}_z"] = round(sz + a * (bz - sz), 6)
         sequence.append(frame_data)
-
     return sequence
+
+
+def _build_squat_landmarks(num_frames: int = 90) -> list[dict]:
+    """基于实测关键帧的标准深蹲 (比纯 FK 更接近真实 MediaPipe 比例)."""
+    from scripts.squat_keyframes import SQUAT_STAND, SQUAT_BOTTOM
+    return _build_from_keyframes(SQUAT_STAND, SQUAT_BOTTOM, num_frames)
 
 
 def _build_pushup_landmarks(num_frames: int = 90) -> list[dict]:
@@ -755,6 +647,37 @@ def _build_shooting_landmarks(num_frames: int = 90) -> list[dict]:
     return sequence
 
 
+def _convert_fk_to_world_space(sequence: list[dict]) -> list[dict]:
+    """将正向运动学坐标转为 MediaPipe world 坐标系 (髋部为原点, Y 向下, 米).
+
+    使用首帧统一缩放，避免逐帧缩放导致动作失真。
+    """
+    if not sequence:
+        return sequence
+
+    fr0 = sequence[0]
+    hip_x = (fr0["left_hip_x"] + fr0["right_hip_x"]) / 2
+    hip_y = (fr0["left_hip_y"] + fr0["right_hip_y"]) / 2
+    hip_z = (fr0["left_hip_z"] + fr0["right_hip_z"]) / 2
+    ys0 = [fr0[f"{n}_y"] for n in LANDMARK_NAMES]
+    span = max(ys0) - min(ys0)
+    scale = 0.85 / span if span > 1e-6 else 0.35
+
+    converted = []
+    for frame in sequence:
+        new_frame = {"frame": frame["frame"]}
+        for name in LANDMARK_NAMES:
+            new_frame[f"{name}_x"] = round((frame[f"{name}_x"] - hip_x) * scale, 6)
+            new_frame[f"{name}_y"] = round(-(frame[f"{name}_y"] - hip_y) * scale, 6)
+            new_frame[f"{name}_z"] = round((frame[f"{name}_z"] - hip_z) * scale, 6)
+        converted.append(new_frame)
+    return converted
+
+
+# 已是 MediaPipe world 坐标的关键帧模板，无需 FK 转换
+WORLD_SPACE_MOVEMENTS = {"squat"}
+
+
 def generate_template(movement: str = "squat", output_dir: str = "templates") -> str:
     """生成指定动作的标准模板 JSON 文件.
 
@@ -781,6 +704,9 @@ def generate_template(movement: str = "squat", output_dir: str = "templates") ->
     else:
         print(f"[generate_template] 警告: '{movement}' 未实现，使用深蹲模板")
         sequence = _build_squat_landmarks(num_frames=90)
+
+    if movement not in WORLD_SPACE_MOVEMENTS:
+        sequence = _convert_fk_to_world_space(sequence)
 
     output_path = os.path.join(output_dir, f"template_{movement}.json")
     with open(output_path, "w", encoding="utf-8") as f:

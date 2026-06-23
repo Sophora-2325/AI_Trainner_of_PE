@@ -103,13 +103,21 @@ class TwinWebSocketServer:
             except Exception:
                 pass
 
-    def send_pose(self, landmarks, frame_idx: int = None):
-        """发送一帧关键点数据到所有连接的客户端.
+    def _broadcast(self, payload: dict):
+        """向所有 WebSocket 客户端广播 JSON 消息."""
+        if not self._clients or self._server is None:
+            return
+        message = json.dumps(payload, ensure_ascii=False)
+        dead = set()
+        for client in self._clients:
+            try:
+                asyncio.run_coroutine_threadsafe(client.send(message), self._loop)
+            except Exception:
+                dead.add(client)
+        self._clients -= dead
 
-        Args:
-            landmarks: (33, 4) MediaPipe world landmarks 数组
-            frame_idx: 帧索引 (可选)
-        """
+    def send_pose(self, landmarks, frame_idx: int = None):
+        """发送一帧关键点数据到所有连接的客户端."""
         if not self._clients or self._server is None:
             return
 
@@ -119,7 +127,6 @@ class TwinWebSocketServer:
         else:
             self._frame_count = frame_idx
 
-        # 提取 12 个主要关节的 3D 坐标 → 36 个数值
         points = []
         for mp_idx, _name in MAJOR_JOINTS:
             pt = landmarks[mp_idx, :3]
@@ -127,24 +134,25 @@ class TwinWebSocketServer:
                            round(float(pt[1]), 4),
                            round(float(pt[2]), 4)])
 
-        message = json.dumps({
+        self._broadcast({
             "type": "pose",
             "frame": frame_idx,
-            "points": points,          # 36 个数值 [x,y,z, x,y,z, ...]
-            "joints": [n for _, n in MAJOR_JOINTS],  # 关节名称列表
-            "bones": BONE_CONNECTIONS,  # 骨骼连接
+            "points": points,
+            "joints": [n for _, n in MAJOR_JOINTS],
+            "bones": BONE_CONNECTIONS,
         })
 
-        # 发送到所有客户端
-        dead = set()
-        for client in self._clients:
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    client.send(message), self._loop
-                )
-            except Exception:
-                dead.add(client)
-        self._clients -= dead
+    def send_frame(self, jpeg_bytes: bytes):
+        """发送 JPEG 画面到 Web 控制台 (base64)."""
+        import base64
+        self._broadcast({
+            "type": "frame",
+            "data": base64.b64encode(jpeg_bytes).decode("ascii"),
+        })
+
+    def send_stats(self, stats: dict):
+        """发送评分/阶段等 HUD 数据到 Web 控制台."""
+        self._broadcast({"type": "stats", **stats})
 
     def send_template(self, template_seq: list[dict]):
         """发送模板关键点序列 (用于右侧模型回放).
@@ -181,6 +189,12 @@ class TwinWebSocketServer:
                 )
             except Exception:
                 self._clients.discard(client)
+
+    def send_template_from_json_file(self, json_path: str):
+        """从 template_*.json 加载并发送模板."""
+        import json as _json
+        with open(json_path, "r", encoding="utf-8") as f:
+            self.send_template(_json.load(f))
 
     @property
     def connected(self) -> bool:

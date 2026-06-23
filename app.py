@@ -156,6 +156,7 @@ class FitnessCoach:
         )
         self.dashboard = DashboardData()
         self.console = ConsoleDashboard()
+        self.display_mode = config.get("display_mode", "opencv")  # opencv | web | headless
 
         # ─── 状态变量 ─────────────────────────────────
         self.movement = ""
@@ -218,8 +219,9 @@ class FitnessCoach:
         print(f"\n{'='*50}")
         print(f"  AI 健身教练 — {self.library._config.get(movement, {}).get('name', movement)}")
         if self._video_mode:
-            print(f"  输入视频: {video_path}")
-            print(f"  模式: headless（结果写入输出视频）")
+            self.display_mode = "headless"
+        elif self.display_mode == "web":
+            print("[Coach] Web 控制台模式 — 请在浏览器打开 http://localhost:8080")
         else:
             print(f"  按 'q' 退出 | 'p' 暂停 | 'r' 重置次数")
         print(f"{'='*50}\n")
@@ -294,11 +296,28 @@ class FitnessCoach:
             self._writer = cv2.VideoWriter(output_path, fourcc, video_fps, (frame_w, frame_h))
             print(f"[Coach] 输出视频: {output_path}")
         else:
+            from src.utils.camera import open_camera
             camera_cfg = self.config.get("camera", {})
-            self.cap = cv2.VideoCapture(camera_cfg.get("device_id", 0))
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_cfg.get("width", 1280))
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_cfg.get("height", 720))
-            self.cap.set(cv2.CAP_PROP_FPS, camera_cfg.get("fps", 30))
+            self.cap, opened_id = open_camera(
+                device_id=camera_cfg.get("device_id", 0),
+                width=camera_cfg.get("width", 1280),
+                height=camera_cfg.get("height", 720),
+                fps=camera_cfg.get("fps", 30),
+            )
+            if self.cap is None:
+                print("[Coach] 无法打开摄像头，请检查：")
+                print("  1) 摄像头是否被其他软件占用（Teams/Zoom/相机）")
+                print("  2) Windows 设置 → 隐私 → 摄像头 是否允许桌面应用")
+                print("  3) 尝试: python web_coach.py --video test_squat.mp4")
+                if self.display_mode == "web" and self.ws_server is not None:
+                    self.ws_server.send_stats({
+                        "score": 0, "phase": "ERROR",
+                        "movement_name": "摄像头不可用",
+                        "rep_count": 0, "advice": "无法读取摄像头，请关闭占用摄像头的程序后重启",
+                        "fps": 0,
+                    })
+            else:
+                camera_cfg["device_id"] = opened_id
             self._writer = None
 
         self.running = True
@@ -326,7 +345,7 @@ class FitnessCoach:
             timestamp=time.time(),
             movement=self.movement,
             rep_count=self.rep_count,
-            avg_score=float(np.mean(self.dashboard.score_history)) if self.dashboard.score_history else 0.0,
+            avg_score=float(np.mean(self.dashboard.scores)) if self.dashboard.scores else 0.0,
         )
         self.profile_manager.record_session(session)
 
@@ -345,9 +364,21 @@ class FitnessCoach:
             if not ret:
                 if self._video_mode:
                     break  # 视频播放完毕
+                if self.cap is None or not self.cap.isOpened():
+                    if self.display_mode == "web" and self.ws_server is not None:
+                        self.ws_server.send_stats({
+                            "score": 0, "phase": "ERROR",
+                            "movement_name": "摄像头不可用",
+                            "rep_count": 0,
+                            "advice": "无法读取摄像头帧，请检查设备或改用 --video test_squat.mp4",
+                            "fps": 0,
+                        })
+                    time.sleep(0.5)
+                    continue
                 if self._frame_idx == 0:
-                    self._frame_idx += 1  # 阻止重复打印
+                    self._frame_idx += 1
                     print(f"[Coach] 无法读取摄像头 (device_id={self.config.get('camera', {}).get('device_id', 0)})，请检查设备ID")
+                time.sleep(0.05)
                 continue
 
             if not self._video_mode:
@@ -360,9 +391,8 @@ class FitnessCoach:
             result = self.estimator.detect(frame_rgb, timestamp=time.time())
 
             if not result.detected:
-                # 未检测到人体
-                cv2.putText(frame, "未检测到人体", (50, 50),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                from src.ui.text_renderer import draw_text
+                draw_text(frame, "未检测到人体", (50, 30), (0, 0, 255), font_size=28)
                 self._write_or_show(frame)
                 if not self._video_mode and cv2.waitKey(1) & 0xFF == ord("q"):
                     break
@@ -452,28 +482,53 @@ class FitnessCoach:
             cv2.putText(output, f"FPS: {fps:.0f}", (10, output.shape[0] - 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
-            self._write_or_show(output)
+            self._write_or_show(output, frame_score=frame_score, phase=phase,
+                                advice=advice or self._last_advice, fps=fps)
 
             if not self._video_mode:
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    break
-                elif key == ord("p"):
-                    self.paused = not self.paused
-                    print(f"[Coach] {'暂停' if self.paused else '继续'}")
-                elif key == ord("r"):
-                    self._reset_rep()
-                    print("[Coach] 次数已重置")
+                if self.display_mode == "opencv":
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        break
+                    elif key == ord("p"):
+                        self.paused = not self.paused
+                        print(f"[Coach] {'暂停' if self.paused else '继续'}")
+                    elif key == ord("r"):
+                        self._reset_rep()
+                        print("[Coach] 次数已重置")
+                else:
+                    time.sleep(0.001)
 
         self.stop()
 
     # ─── 内部方法 ──────────────────────────────────────────
 
-    def _write_or_show(self, frame: np.ndarray):
-        """写入视频文件（headless模式）或显示窗口（摄像头模式）."""
+    def _write_or_show(self, frame: np.ndarray, frame_score=None, phase=None, advice: str = "", fps: float = 0):
+        """写入视频 / Web 推送 / OpenCV 窗口显示."""
+        if self.display_mode == "web" and self.ws_server is not None:
+            ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if ok:
+                self.ws_server.send_frame(buf.tobytes())
+            if frame_score is not None:
+                movement_name = self.library._config.get(self.movement, {}).get("name", self.movement)
+                self.ws_server.send_stats({
+                    "score": round(float(frame_score.total), 1),
+                    "joint": round(float(frame_score.joint_deviation), 1),
+                    "symmetry": round(float(frame_score.symmetry), 1),
+                    "stability": round(float(frame_score.stability), 1),
+                    "tempo": round(float(frame_score.tempo), 1),
+                    "phase": phase.name if phase else "",
+                    "movement": self.movement,
+                    "movement_name": movement_name,
+                    "rep_count": self.rep_count,
+                    "advice": advice or "",
+                    "fps": round(fps, 1),
+                })
+            return
+
         if self._video_mode and self._writer is not None:
             self._writer.write(frame)
-        elif not self._video_mode:
+        elif self.display_mode == "opencv" and not self._video_mode:
             cv2.imshow("AI Fitness Coach", frame)
 
     def _solve_ik(self, landmarks: np.ndarray) -> dict:
@@ -616,7 +671,11 @@ class FitnessCoach:
             return
 
         # 从模板的 joint_angle_sequence 反算关键点 或 从 JSON 加载原始关键点
-        json_path = os.path.join("templates", f"template_{self.movement}.json")
+        try:
+            from src.utils.paths import resource_path
+            json_path = resource_path("templates", f"template_{self.movement}.json")
+        except ImportError:
+            json_path = os.path.join("templates", f"template_{self.movement}.json")
         if os.path.exists(json_path):
             with open(json_path, "r", encoding="utf-8") as f:
                 template_seq = json.load(f)
@@ -688,9 +747,21 @@ class FitnessCoach:
 
 def load_config(config_path: str = "config/settings.yaml") -> dict:
     """加载YAML配置."""
+    from src.utils.paths import resource_path, setup_runtime
+    setup_runtime()
+    if not os.path.isabs(config_path) and not os.path.exists(config_path):
+        bundled = resource_path(config_path)
+        if os.path.exists(bundled):
+            config_path = bundled
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            cfg = yaml.safe_load(f) or {}
+        mov_cfg = cfg.get("movement_config", "config/movements.yaml")
+        if not os.path.isabs(mov_cfg) and not os.path.exists(mov_cfg):
+            bundled_mov = resource_path(mov_cfg)
+            if os.path.exists(bundled_mov):
+                cfg["movement_config"] = bundled_mov
+        return cfg
     return {}
 
 
@@ -709,6 +780,8 @@ def main():
                         help="输入视频路径（headless模式，不弹窗，结果写入文件）")
     parser.add_argument("--output", "-o", type=str, default=None,
                         help="输出视频路径（默认自动生成: {input}_analyzed.mp4）")
+    parser.add_argument("--web-ui", action="store_true",
+                        help="使用 Web 控制台显示（浏览器界面，无需 OpenCV 窗口）")
     parser.add_argument("--list-movements", action="store_true",
                         help="列出所有支持的动作")
     parser.add_argument("--webots", action="store_true",
@@ -719,6 +792,10 @@ def main():
     config["use_opensim"] = not args.no_opensim
     config["use_llm"] = not args.no_llm
     config["webots_op2_enabled"] = args.webots
+    if args.web_ui:
+        config["display_mode"] = "web"
+    if args.video:
+        config["display_mode"] = "headless"
 
     if args.list_movements:
         lib = MovementLibrary()

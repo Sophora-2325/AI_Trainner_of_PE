@@ -78,7 +78,7 @@ class InterventionEngine:
     def __init__(
         self,
         movement: str = "squat",
-        rom_config: dict | None = None,
+        rom_config: Optional[dict] = None,
         angular_velocity_warn: float = 300.0,
     ):
         self.movement = movement
@@ -116,8 +116,8 @@ class InterventionEngine:
         self,
         joint_angles: dict[str, float],
         phase,
-        landmarks: np.ndarray | None = None,
-        timestamp: float | None = None,
+        landmarks: Optional[np.ndarray] = None,
+        timestamp: Optional[float] = None,
     ) -> InterventionResult:
         """Evaluate one frame of joint angles.
 

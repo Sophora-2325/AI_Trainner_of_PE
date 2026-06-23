@@ -65,15 +65,19 @@ class MovementLibrary:
         if movement in self._templates:
             return self._templates[movement]
 
-        # 优先 .npy 格式 (关节角度)
+        # 优先 JSON (33 关键点 world/image 坐标, 与 3D 孪生一致)
+        try:
+            from src.utils.paths import resource_path
+            json_path = resource_path("templates", f"template_{movement}.json")
+        except ImportError:
+            json_path = os.path.join("templates", f"template_{movement}.json")
+        if os.path.exists(json_path):
+            return self._load_json_template(movement, json_path)
+
+        # 其次 .npy 格式 (关节角度, 可能来自 OpenSim)
         npy_path = os.path.join(self.data_dir, f"{movement}_reference.npy")
         if os.path.exists(npy_path):
             return self._load_npy_template(movement, npy_path)
-
-        # 其次 JSON 格式 (第3周: 33关键点坐标)
-        json_path = os.path.join("templates", f"template_{movement}.json")
-        if os.path.exists(json_path):
-            return self._load_json_template(movement, json_path)
 
         print(f"[MovementLibrary] 未找到模板文件, 使用合成模板")
         return self._generate_synthetic_template(movement)

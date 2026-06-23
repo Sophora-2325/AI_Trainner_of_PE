@@ -2,7 +2,8 @@
 # 安装方式: pip install -r requirements.txt
 
 # 第1-2周：核心依赖
-mediapipe>=0.10.0
+# 使用 MediaPipe Tasks API (>=0.10.30)，无需旧版 mp.solutions
+mediapipe>=0.10.30
 opencv-python>=4.8.0
 numpy>=1.24.0
 
@@ -18,3 +19,4 @@ websockets>=12.0                # Python WebSocket 服务器
 # 第6周：语音反馈 + 图表
 pyttsx3>=2.90                  # 离线 TTS
 matplotlib>=3.7.0              # 评分历史折线图
+Pillow>=9.0                    # 摄像头画面中文渲染
