@@ -1,7 +1,8 @@
-"""AI 健身教练 — 一键启动器（GUI 入口，适合打包 exe）.
+"""AI 健身教练 — 一键启动器（GUI 入口）.
 
 功能:
-  - 摄像头实时教练（自动打开 3D 孪生页面）
+  - Web 控制台（推荐）
+  - 摄像头实时教练（OpenCV 窗口）
   - 视频分析模式
   - 课程流程自动验收
   - 查看评分历史折线图
@@ -28,7 +29,6 @@ MOVEMENTS = [
     ("pushup", "俯卧撑"),
     ("pullup", "引体向上"),
     ("plank", "平板支撑"),
-    ("shooting", "投篮"),
 ]
 
 # Windows: 从 tkinter 子进程启动 OpenCV 窗口时，未分配控制台常导致异常退出码 120
@@ -69,11 +69,10 @@ def explain_exit_code(code: int, stderr: str = "") -> str:
         base = (
             "程序异常退出（退出码 120）。\n\n"
             "这是 Windows 上从 GUI 启动子进程时的常见现象，通常表示：\n"
-            "  1. MediaPipe 版本过高（需 mediapipe<0.10.30）\n"
-            "  2. OpenCV 摄像头窗口无法从 GUI 子进程创建\n"
-            "  3. 缺少 Visual C++ 运行库\n\n"
+            "  1. OpenCV 摄像头窗口无法从 GUI 子进程创建\n"
+            "  2. 缺少 Visual C++ 运行库\n\n"
             "建议先在终端测试:\n"
-            "  python app.py --movement squat --no-llm --no-opensim"
+            "  python web_coach.py --no-llm"
         )
     elif code == 1:
         base = "程序运行失败（退出码 1）。"
@@ -168,13 +167,8 @@ class CoachLauncher(tk.Tk):
             messagebox.showwarning("提示", f"未找到 3D 页面:\n{html}")
 
     def _build_coach_args(self, video: str = None) -> list:
-        movement = self._selected_movement()
-        if getattr(sys, "frozen", False):
-            cmd = [sys.executable, "--coach"]
-        else:
-            cmd = [sys.executable, os.path.join(data_path(), "app.py")]
-
-        cmd += ["--movement", movement]
+        cmd = [sys.executable, os.path.join(data_path(), "app.py"),
+               "--movement", self._selected_movement()]
         if self.no_llm_var.get():
             cmd.append("--no-llm")
         if self.no_opensim_var.get():
@@ -197,49 +191,19 @@ class CoachLauncher(tk.Tk):
 
     def _run_web_coach(self):
         try:
-            if getattr(sys, "frozen", False):
-                self._run_web_coach_inline()
-            else:
-                cmd = [sys.executable, os.path.join(data_path(), "web_coach.py"),
-                       "--movement", self._selected_movement()]
-                if self.no_llm_var.get():
-                    cmd.append("--no-llm")
-                proc = subprocess.run(cmd, cwd=data_path(), **subprocess_flags(new_console=True))
-                if proc.returncode not in (0, None) and proc.returncode != 0:
-                    hint = explain_exit_code(proc.returncode)
-                    self.after(0, lambda h=hint: messagebox.showerror("Web 控制台异常", h))
+            cmd = [sys.executable, os.path.join(data_path(), "web_coach.py"),
+                   "-m", self._selected_movement()]
+            if self.no_llm_var.get():
+                cmd.append("--no-llm")
+            proc = subprocess.run(cmd, cwd=data_path(), **subprocess_flags(new_console=True))
+            if proc.returncode not in (0, None) and proc.returncode != 0:
+                hint = explain_exit_code(proc.returncode)
+                self.after(0, lambda h=hint: messagebox.showerror("Web 控制台异常", h))
         except Exception as e:
             self.after(0, lambda err=str(e): messagebox.showerror("错误", err))
         finally:
             self._running = False
             self.after(0, lambda: self.status.set("就绪"))
-
-    def _run_web_coach_inline(self):
-        """exe 单文件模式：内嵌启动 Web 控制台."""
-        import signal
-        import webbrowser
-        from web_coach import find_free_port, start_http_server
-        from app import FitnessCoach, load_config
-
-        movement = self._selected_movement()
-        port = find_free_port(8080)
-        http_server, port = start_http_server(port)
-        url = f"http://127.0.0.1:{port}/coach_dashboard.html"
-        webbrowser.open(url)
-
-        config = load_config(resource_path("config", "settings.yaml"))
-        config["use_opensim"] = False
-        config["use_llm"] = not self.no_llm_var.get()
-        config["display_mode"] = "web"
-        config["ws_enabled"] = True
-
-        coach = FitnessCoach(config)
-        signal.signal(signal.SIGINT, lambda s, f: coach.stop())
-        try:
-            coach.start(movement=movement, video_path=None)
-        finally:
-            coach.stop()
-            http_server.shutdown()
 
     def _start_live(self):
         if self._running:
@@ -278,41 +242,21 @@ class CoachLauncher(tk.Tk):
 
     def _run_coach_subprocess(self, video: str):
         try:
-            if getattr(sys, "frozen", False):
-                self._run_coach_inline(video)
-            else:
-                cmd = self._build_coach_args(video)
-                # 实时模式需要独立控制台，否则 OpenCV 窗口在 Windows 上易异常退出 (码 120)
-                use_console = video is None
-                proc = subprocess.run(
-                    cmd,
-                    cwd=data_path(),
-                    **subprocess_flags(new_console=use_console),
-                )
-                if proc.returncode != 0:
-                    hint = explain_exit_code(proc.returncode)
-                    self.after(0, lambda h=hint: messagebox.showerror("教练程序异常", h))
+            cmd = self._build_coach_args(video)
+            use_console = video is None
+            proc = subprocess.run(
+                cmd,
+                cwd=data_path(),
+                **subprocess_flags(new_console=use_console),
+            )
+            if proc.returncode != 0:
+                hint = explain_exit_code(proc.returncode)
+                self.after(0, lambda h=hint: messagebox.showerror("教练程序异常", h))
         except Exception as e:
             self.after(0, lambda err=str(e): messagebox.showerror("错误", err))
         finally:
             self._running = False
             self.after(0, lambda: self.status.set("就绪"))
-
-    def _run_coach_inline(self, video: str):
-        """exe 模式下直接调用 FitnessCoach."""
-        import signal
-        from app import FitnessCoach, load_config
-
-        config = load_config(resource_path("config", "settings.yaml"))
-        config["use_opensim"] = not self.no_opensim_var.get()
-        config["use_llm"] = not self.no_llm_var.get()
-        config["movement_config"] = resource_path("config", "movements.yaml")
-
-        coach = FitnessCoach(config)
-        signal.signal(signal.SIGINT, lambda s, f: coach.stop())
-        movement = self._selected_movement()
-        coach.start(movement=movement, video_path=video)
-        coach.stop()
 
     def _run_auto_demo(self):
         self.status.set("正在运行自动验收…")
@@ -320,32 +264,28 @@ class CoachLauncher(tk.Tk):
 
     def _auto_demo_worker(self):
         try:
-            if getattr(sys, "frozen", False):
-                from scripts.auto_demo import main as demo_main
-                code = demo_main()
-            else:
-                script = os.path.join(data_path(), "scripts", "auto_demo.py")
-                cmd = [sys.executable, script]
-                if self.no_llm_var.get():
-                    cmd.append("--skip-llm")
-                proc = subprocess.run(
-                    cmd,
-                    cwd=data_path(),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    **subprocess_flags(new_console=False),
-                )
-                if proc.stdout:
-                    print(proc.stdout)
-                if proc.stderr:
-                    print(proc.stderr, file=sys.stderr)
-                code = proc.returncode
-                if code != 0 and proc.stderr:
-                    err = proc.stderr.strip()
-                    self.after(0, lambda e=err: messagebox.showerror(
-                        "自动验收失败", explain_exit_code(code, e)))
+            script = os.path.join(data_path(), "scripts", "auto_demo.py")
+            cmd = [sys.executable, script]
+            if self.no_llm_var.get():
+                cmd.append("--skip-llm")
+            proc = subprocess.run(
+                cmd,
+                cwd=data_path(),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                **subprocess_flags(new_console=False),
+            )
+            if proc.stdout:
+                print(proc.stdout)
+            if proc.stderr:
+                print(proc.stderr, file=sys.stderr)
+            code = proc.returncode
+            if code != 0 and proc.stderr:
+                err = proc.stderr.strip()
+                self.after(0, lambda e=err: messagebox.showerror(
+                    "自动验收失败", explain_exit_code(code, e)))
 
             if code == 0:
                 msg = "全部通过"

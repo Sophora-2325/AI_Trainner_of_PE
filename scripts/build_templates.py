@@ -1,10 +1,10 @@
 """重建标准动作模板.
 
-默认: 生物力学 FK 生成「理想标准动作」(一个完整周期, 90帧)
+默认: 关键帧/生物力学 FK 生成「理想标准动作」(一个完整周期, 90帧)
 可选: --from-video 从参考视频提取 (需自行提供标准动作录像)
 
 用法:
-  python scripts/build_templates.py                 # 全部 FK 标准模板
+  python scripts/build_templates.py                 # 全部标准模板
   python scripts/build_templates.py -m squat        # 仅深蹲
   python scripts/build_templates.py -m squat --from-video ref.mp4
 """
@@ -62,8 +62,8 @@ def build_one(movement: str, from_video: str = None, skip: int = 2) -> str:
         print(f"[build_templates] {movement}: 从参考视频提取并精炼")
         return build_from_video(movement, from_video, skip)
 
-    if movement == "squat":
-        print(f"[build_templates] {movement}: 实测关键帧标准深蹲 ({TEMPLATE_FRAMES} 帧)")
+    if movement in {"squat", "deadlift", "pushup", "plank"}:
+        print(f"[build_templates] {movement}: 关键帧标准动作 ({TEMPLATE_FRAMES} 帧)")
     else:
         print(f"[build_templates] {movement}: FK 生物力学标准动作 ({TEMPLATE_FRAMES} 帧)")
     return build_from_fk(movement)
@@ -80,7 +80,7 @@ def main():
     targets = [args.movement] if args.movement else MOVEMENTS
     print("=" * 50)
     print("  重建标准模板")
-    print("  默认: 实测关键帧/FK | 可选: --from-video 参考录像")
+    print("  默认: 关键帧/FK | 可选: --from-video 参考录像")
     print("=" * 50)
 
     if args.from_video and not args.movement:

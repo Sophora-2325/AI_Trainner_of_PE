@@ -85,6 +85,7 @@ class TwinWebSocketServer:
         self._running = False
         self._frame_count = 0
         self.on_movement_change = None  # callback(movement_name)
+        self._last_template_message: Optional[str] = None
 
     def start(self):
         """在后台线程启动 WebSocket 服务器."""
@@ -181,6 +182,7 @@ class TwinWebSocketServer:
             "joints": [n for _, n in MAJOR_JOINTS],
             "bones": BONE_CONNECTIONS,
         })
+        self._last_template_message = message
 
         for client in list(self._clients):
             try:
@@ -208,6 +210,11 @@ class TwinWebSocketServer:
         async def handler(websocket):
             self._clients.add(websocket)
             print(f"[TwinWS] 客户端已连接 (共 {len(self._clients)} 个)")
+            if self._last_template_message:
+                try:
+                    await websocket.send(self._last_template_message)
+                except Exception:
+                    pass
             try:
                 async for msg in websocket:
                     try:

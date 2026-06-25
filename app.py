@@ -316,6 +316,7 @@ class FitnessCoach:
                         "rep_count": 0, "advice": "无法读取摄像头，请关闭占用摄像头的程序后重启",
                         "fps": 0,
                     })
+                return
             else:
                 camera_cfg["device_id"] = opened_id
             self._writer = None

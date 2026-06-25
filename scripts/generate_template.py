@@ -99,6 +99,120 @@ def _build_from_keyframes(
     return sequence
 
 
+def _lerp_pose(
+    pose_a: dict[str, tuple[float, float, float]],
+    pose_b: dict[str, tuple[float, float, float]],
+    alpha: float,
+) -> dict[str, tuple[float, float, float]]:
+    """线性插值两个关键姿态."""
+    pose = {}
+    for name in LANDMARK_NAMES:
+        ax, ay, az = pose_a[name]
+        bx, by, bz = pose_b[name]
+        pose[name] = (
+            ax + alpha * (bx - ax),
+            ay + alpha * (by - ay),
+            az + alpha * (bz - az),
+        )
+    return pose
+
+
+def _sequence_from_keyposes(
+    keyposes: list[tuple[float, dict[str, tuple[float, float, float]]]],
+    num_frames: int = 90,
+) -> list[dict]:
+    """按关键时刻插值生成完整模板，输入坐标为 MediaPipe world."""
+    keyposes = sorted(keyposes, key=lambda item: item[0])
+    sequence = []
+    for f in range(num_frames):
+        t = f / max(num_frames - 1, 1)
+        left_t, left_pose = keyposes[0]
+        right_t, right_pose = keyposes[-1]
+        for i in range(len(keyposes) - 1):
+            if keyposes[i][0] <= t <= keyposes[i + 1][0]:
+                left_t, left_pose = keyposes[i]
+                right_t, right_pose = keyposes[i + 1]
+                break
+        span = max(right_t - left_t, 1e-6)
+        local = (t - left_t) / span
+        # smootherstep：关键帧之间速度更自然，避免机械匀速。
+        local = local * local * local * (local * (local * 6 - 15) + 10)
+        pose = _lerp_pose(left_pose, right_pose, local)
+        frame = {"frame": f}
+        for name in LANDMARK_NAMES:
+            x, y, z = pose[name]
+            frame[f"{name}_x"] = round(float(x), 6)
+            frame[f"{name}_y"] = round(float(y), 6)
+            frame[f"{name}_z"] = round(float(z), 6)
+        sequence.append(frame)
+    return sequence
+
+
+def _pose_from_major_points(
+    major: dict[str, tuple[float, float, float]],
+) -> dict[str, tuple[float, float, float]]:
+    """由 12 个主关节补全 MediaPipe 33 点，供标准模板播放使用."""
+    pose = {}
+
+    l_sh = np.array(major["left_shoulder"])
+    r_sh = np.array(major["right_shoulder"])
+    l_el = np.array(major["left_elbow"])
+    r_el = np.array(major["right_elbow"])
+    l_wr = np.array(major["left_wrist"])
+    r_wr = np.array(major["right_wrist"])
+    l_hp = np.array(major["left_hip"])
+    r_hp = np.array(major["right_hip"])
+    l_kn = np.array(major["left_knee"])
+    r_kn = np.array(major["right_knee"])
+    l_an = np.array(major["left_ankle"])
+    r_an = np.array(major["right_ankle"])
+
+    shoulder_mid = (l_sh + r_sh) * 0.5
+    hip_mid = (l_hp + r_hp) * 0.5
+    trunk = shoulder_mid - hip_mid
+    trunk_norm = trunk / max(np.linalg.norm(trunk), 1e-6)
+    face_dir = np.array([0.0, -0.05, 0.16])
+    head_base = shoulder_mid + trunk_norm * 0.17
+
+    pose["nose"] = tuple(head_base + face_dir)
+    pose["left_eye_inner"] = tuple(head_base + np.array([0.025, -0.015, 0.13]))
+    pose["left_eye"] = tuple(head_base + np.array([0.04, -0.015, 0.13]))
+    pose["left_eye_outer"] = tuple(head_base + np.array([0.055, -0.015, 0.12]))
+    pose["right_eye_inner"] = tuple(head_base + np.array([-0.025, -0.015, 0.13]))
+    pose["right_eye"] = tuple(head_base + np.array([-0.04, -0.015, 0.13]))
+    pose["right_eye_outer"] = tuple(head_base + np.array([-0.055, -0.015, 0.12]))
+    pose["left_ear"] = tuple(head_base + np.array([0.09, 0.0, 0.02]))
+    pose["right_ear"] = tuple(head_base + np.array([-0.09, 0.0, 0.02]))
+    pose["mouth_left"] = tuple(head_base + np.array([0.03, 0.02, 0.14]))
+    pose["mouth_right"] = tuple(head_base + np.array([-0.03, 0.02, 0.14]))
+
+    for name, value in major.items():
+        pose[name] = value
+
+    def hand_points(wrist: np.ndarray, side: float):
+        return {
+            "pinky": tuple(wrist + np.array([0.035 * side, 0.01, 0.01])),
+            "index": tuple(wrist + np.array([0.01 * side, 0.00, 0.045])),
+            "thumb": tuple(wrist + np.array([-0.03 * side, 0.01, 0.02])),
+        }
+
+    left_hand = hand_points(l_wr, 1.0)
+    right_hand = hand_points(r_wr, -1.0)
+    pose["left_pinky"] = left_hand["pinky"]
+    pose["left_index"] = left_hand["index"]
+    pose["left_thumb"] = left_hand["thumb"]
+    pose["right_pinky"] = right_hand["pinky"]
+    pose["right_index"] = right_hand["index"]
+    pose["right_thumb"] = right_hand["thumb"]
+
+    pose["left_heel"] = tuple(l_an + np.array([0.0, 0.045, -0.055]))
+    pose["right_heel"] = tuple(r_an + np.array([0.0, 0.045, -0.055]))
+    pose["left_foot_index"] = tuple(l_an + np.array([0.035, 0.085, 0.11]))
+    pose["right_foot_index"] = tuple(r_an + np.array([-0.035, 0.085, 0.11]))
+
+    return pose
+
+
 def _build_squat_landmarks(num_frames: int = 90) -> list[dict]:
     """基于实测关键帧的标准深蹲 (比纯 FK 更接近真实 MediaPipe 比例)."""
     from scripts.squat_keyframes import SQUAT_STAND, SQUAT_BOTTOM
@@ -106,226 +220,86 @@ def _build_squat_landmarks(num_frames: int = 90) -> list[dict]:
 
 
 def _build_pushup_landmarks(num_frames: int = 90) -> list[dict]:
-    """正向运动学构建标准俯卧撑的 33 关键点.
-
-    核心关节角度:
-      - 肘角: 180°(直臂) → 90°(底部) → 180°
-      - 肩角: 约 45° 外展
-      - 身体呈直线
-    """
-    t = np.linspace(0, 1, num_frames)
-    p = BODY_PROPS
-
-    elbow_deg = _smooth_valley(t, 180.0, 90.0)
-    # 身体高度随俯卧撑变化 (相对于地面)
-    body_height = _smooth_valley(t, 0.35, 0.12)
-
-    sequence = []
-    plank_y = 0.12  # 地面以上身体高度
-
-    for f in range(num_frames):
-        ed = math.radians(elbow_deg[f])
-        bh = body_height[f]
-        shoulder_y = bh + 0.15  # 肩在髋之上
-
-        # 骨盆 — 平板姿势，身体呈直线
-        pelvis = _vec(0.0, bh, 0.0)
-
-        # 躯干 (水平，略抬头)
-        spine_top = _vec(0.0, shoulder_y, 0.0)
-        neck = spine_top + _vec(0.0, p["neck_length"] * 0.7, p["neck_length"] * 0.5)
-        head_center = neck + _vec(0.0, p["head_radius"] * 0.8, p["head_radius"] * 0.8)
-        nose = head_center + _vec(0.0, p["head_radius"] * 0.7, p["head_radius"] * 0.5)
-        # 面部点省略完整计算，使用简化偏移
-        le = head_center + _vec( p["head_radius"] * 0.3, p["head_radius"] * 0.5, p["head_radius"] * 0.6)
-        re = head_center + _vec(-p["head_radius"] * 0.3, p["head_radius"] * 0.5, p["head_radius"] * 0.6)
-        le_i = head_center + _vec( p["head_radius"] * 0.1, p["head_radius"] * 0.5, p["head_radius"] * 0.6)
-        re_i = head_center + _vec(-p["head_radius"] * 0.1, p["head_radius"] * 0.5, p["head_radius"] * 0.6)
-        le_o = head_center + _vec( p["head_radius"] * 0.5, p["head_radius"] * 0.5, p["head_radius"] * 0.5)
-        re_o = head_center + _vec(-p["head_radius"] * 0.5, p["head_radius"] * 0.5, p["head_radius"] * 0.5)
-        lear = head_center + _vec( p["head_radius"] * 0.8, p["head_radius"] * 0.2, 0.0)
-        rear = head_center + _vec(-p["head_radius"] * 0.8, p["head_radius"] * 0.2, 0.0)
-        ml = head_center + _vec( p["head_radius"] * 0.2, p["head_radius"] * 0.3, p["head_radius"] * 0.7)
-        mr = head_center + _vec(-p["head_radius"] * 0.2, p["head_radius"] * 0.3, p["head_radius"] * 0.7)
-
-        # 肩
-        half_sw = p["shoulder_width"] / 2.0
-        LShoulder = _vec( half_sw, shoulder_y, 0.0)
-        RShoulder = _vec(-half_sw, shoulder_y, 0.0)
-
-        # 手臂 — 手撑地
-        upper_arm_angle = math.pi - ed
-        LElbow = LShoulder + _vec(0.0, -p["upper_arm"] * math.cos(upper_arm_angle * 0.5),
-                                  -p["upper_arm"] * math.sin(upper_arm_angle * 0.5))
-        RElbow = RShoulder + _vec(0.0, -p["upper_arm"] * math.cos(upper_arm_angle * 0.5),
-                                  -p["upper_arm"] * math.sin(upper_arm_angle * 0.5))
-        # 前臂指向地面
-        forearm_dir = _vec(0.0, -1.0, 0.0)
-        LWrist = LElbow + forearm_dir * p["lower_arm"]
-        RWrist = RElbow + forearm_dir * p["lower_arm"]
-        LPinky = LWrist + _vec( 0.03, 0.02, -0.02)
-        RPinky = RWrist + _vec(-0.03, 0.02, -0.02)
-        LIndex = LWrist + _vec( 0.0, 0.0, -0.04)
-        RIndex = RWrist + _vec( 0.0, 0.0, -0.04)
-        LThumb = LWrist + _vec(-0.03, 0.0, -0.02)
-        RThumb = RWrist + _vec( 0.03, 0.0, -0.02)
-
-        # 髋
-        half_hw = p["hip_width"] / 2.0
-        LHip = _vec( half_hw, bh + 0.02, -0.02)
-        RHip = _vec(-half_hw, bh + 0.02, -0.02)
-
-        # 腿 (伸直)
-        leg_len = p["upper_leg"] + p["lower_leg"]
-        LKnee = LHip + _vec(0.0, -p["upper_leg"], 0.0)
-        RKnee = RHip + _vec(0.0, -p["upper_leg"], 0.0)
-        LAnkle = LKnee + _vec(0.0, -p["lower_leg"], 0.0)
-        RAnkle = RKnee + _vec(0.0, -p["lower_leg"], 0.0)
-        LHeel = LAnkle + _vec(0.0, 0.0, -p["foot_length"] * 0.3)
-        RHeel = RAnkle + _vec(0.0, 0.0, -p["foot_length"] * 0.3)
-        LFootIdx = LAnkle + _vec(0.0, -p["foot_length"] * 0.05, p["foot_length"] * 0.3)
-        RFootIdx = RAnkle + _vec(0.0, -p["foot_length"] * 0.05, p["foot_length"] * 0.3)
-
-        pts = [
-            nose, le_i, le, le_o, re_i, re, re_o, lear, rear, ml, mr,
-            LShoulder, RShoulder, LElbow, RElbow, LWrist, RWrist,
-            LPinky, RPinky, LIndex, RIndex, LThumb, RThumb,
-            LHip, RHip, LKnee, RKnee, LAnkle, RAnkle,
-            LHeel, RHeel, LFootIdx, RFootIdx,
-        ]
-
-        frame_data = {"frame": f}
-        for i, name in enumerate(LANDMARK_NAMES):
-            pt = pts[i]
-            frame_data[f"{name}_x"] = round(float(pt[0]), 6)
-            frame_data[f"{name}_y"] = round(float(pt[1]), 6)
-            frame_data[f"{name}_z"] = round(float(pt[2]), 6)
-
-        sequence.append(frame_data)
-
-    return sequence
+    """关键帧标准俯卧撑：四肢着地、身体卧倒，前肢屈伸上下运动."""
+    top = _pose_from_major_points({
+        "left_shoulder": (0.18, -0.18, 0.30),
+        "right_shoulder": (-0.18, -0.18, 0.30),
+        "left_elbow": (0.23, -0.07, 0.23),
+        "right_elbow": (-0.23, -0.07, 0.23),
+        "left_wrist": (0.25, 0.08, 0.24),
+        "right_wrist": (-0.25, 0.08, 0.24),
+        "left_hip": (0.13, -0.12, -0.02),
+        "right_hip": (-0.13, -0.12, -0.02),
+        "left_knee": (0.12, -0.03, -0.30),
+        "right_knee": (-0.12, -0.03, -0.30),
+        "left_ankle": (0.10, 0.08, -0.58),
+        "right_ankle": (-0.10, 0.08, -0.58),
+    })
+    bottom = _pose_from_major_points({
+        "left_shoulder": (0.18, 0.00, 0.30),
+        "right_shoulder": (-0.18, 0.00, 0.30),
+        "left_elbow": (0.34, 0.02, 0.24),
+        "right_elbow": (-0.34, 0.02, 0.24),
+        "left_wrist": (0.25, 0.08, 0.24),
+        "right_wrist": (-0.25, 0.08, 0.24),
+        "left_hip": (0.13, -0.02, -0.02),
+        "right_hip": (-0.13, -0.02, -0.02),
+        "left_knee": (0.12, 0.02, -0.30),
+        "right_knee": (-0.12, 0.02, -0.30),
+        "left_ankle": (0.10, 0.08, -0.58),
+        "right_ankle": (-0.10, 0.08, -0.58),
+    })
+    return _sequence_from_keyposes([(0.0, top), (0.48, bottom), (0.58, bottom), (1.0, top)], num_frames)
 
 
 def _build_deadlift_landmarks(num_frames: int = 90) -> list[dict]:
-    """正向运动学构建标准硬拉的 33 关键点.
-
-    核心关节角度:
-      - 髋角: 60°(俯身) → 180°(直立锁定)
-      - 膝角: 130°(起始) → 180°(锁定) → 130°(下放)
-    """
-    t = np.linspace(0, 1, num_frames)
-    p = BODY_PROPS
-
-    hip_deg = _smooth_valley(t, 60.0, 60.0, descent_pct=0.01, bottom_pct=0.55)
-    for i in range(len(t)):
-        if t[i] > 0.55:
-            frac = (t[i] - 0.55) / 0.45
-            hip_deg[i] = 60.0 + 120.0 * (1.0 - (1.0 - frac) ** 2)
-    hip_deg = np.array(hip_deg)
-
-    knee_deg = np.full_like(t, 130.0)
-    for i in range(len(t)):
-        if t[i] > 0.55:
-            frac = (t[i] - 0.55) / 0.25
-            if frac < 1.0:
-                knee_deg[i] = 130.0 + 50.0 * frac
-            else:
-                knee_deg[i] = 180.0
-
-    sequence = []
-    for f in range(num_frames):
-        ha = math.radians(hip_deg[f])
-        ka = math.radians(knee_deg[f])
-
-        hip_y = 0.95
-        pelvis = _vec(0.0, hip_y, 0.0)
-
-        # 躯干前倾: 髋角60°时前倾约54°, 锁定后直立
-        torso_lean = math.radians((180.0 - hip_deg[f]) * 0.45)
-        spine_top = pelvis + _vec(
-            math.sin(torso_lean) * p["torso_length"],
-            math.cos(torso_lean) * p["torso_length"],
-            0.0,
-        )
-
-        neck = spine_top + _vec(
-            math.sin(torso_lean) * p["neck_length"] * 0.3,
-            math.cos(torso_lean) * p["neck_length"],
-            0.0,
-        )
-        head_center = neck + _vec(
-            math.sin(torso_lean) * p["head_radius"] * 0.8,
-            math.cos(torso_lean) * p["head_radius"] * 1.5,
-            0.0,
-        )
-        nose = head_center + _vec(
-            math.sin(torso_lean) * p["head_radius"] * 0.3,
-            math.cos(torso_lean) * p["head_radius"],
-            p["head_radius"] * 0.4,
-        )
-
-        le = head_center + _vec( p["head_radius"] * 0.3, p["head_radius"] * 1.0, p["head_radius"] * 0.7)
-        re = head_center + _vec(-p["head_radius"] * 0.3, p["head_radius"] * 1.0, p["head_radius"] * 0.7)
-        le_i = head_center + _vec( p["head_radius"] * 0.1, p["head_radius"] * 1.0, p["head_radius"] * 0.7)
-        re_i = head_center + _vec(-p["head_radius"] * 0.1, p["head_radius"] * 1.0, p["head_radius"] * 0.7)
-        le_o = head_center + _vec( p["head_radius"] * 0.5, p["head_radius"] * 1.0, p["head_radius"] * 0.6)
-        re_o = head_center + _vec(-p["head_radius"] * 0.5, p["head_radius"] * 1.0, p["head_radius"] * 0.6)
-        lear = head_center + _vec( p["head_radius"] * 0.9, p["head_radius"] * 0.4, 0.0)
-        rear = head_center + _vec(-p["head_radius"] * 0.9, p["head_radius"] * 0.4, 0.0)
-        ml = head_center + _vec( p["head_radius"] * 0.25, p["head_radius"] * 0.5, p["head_radius"] * 0.8)
-        mr = head_center + _vec(-p["head_radius"] * 0.25, p["head_radius"] * 0.5, p["head_radius"] * 0.8)
-
-        half_sw = p["shoulder_width"] / 2.0
-        LShoulder = _vec( half_sw, spine_top[1] - 0.02, 0.0)
-        RShoulder = _vec(-half_sw, spine_top[1] - 0.02, 0.0)
-
-        LElbow = LShoulder + _vec(0.0, -p["upper_arm"], 0.05)
-        RElbow = RShoulder + _vec(0.0, -p["upper_arm"], 0.05)
-        LWrist = LElbow + _vec(0.0, -p["lower_arm"], 0.02)
-        RWrist = RElbow + _vec(0.0, -p["lower_arm"], 0.02)
-        LPinky = LWrist + _vec( 0.03, -0.01, 0.02)
-        RPinky = RWrist + _vec(-0.03, -0.01, 0.02)
-        LIndex = LWrist + _vec( 0.005, -0.01, 0.04)
-        RIndex = RWrist + _vec(-0.005, -0.01, 0.04)
-        LThumb = LWrist + _vec(-0.03,  0.005, 0.01)
-        RThumb = RWrist + _vec( 0.03,  0.005, 0.01)
-
-        half_hw = p["hip_width"] / 2.0
-        LHip = _vec( half_hw, hip_y, -0.02)
-        RHip = _vec(-half_hw, hip_y, -0.02)
-
-        thigh_angle = math.pi - ha - math.pi / 2.0
-        thigh_dir = _vec(math.sin(torso_lean + thigh_angle) * 0.3, -0.8, 0.02)
-        LKnee = LHip + thigh_dir * p["upper_leg"]
-        RKnee = RHip + thigh_dir * p["upper_leg"]
-
-        shank_angle = math.pi - ka
-        shank_dir = _vec(-math.sin(shank_angle - math.pi / 2.0) * 0.25, -0.85, 0.0)
-        LAnkle = LKnee + shank_dir * p["lower_leg"]
-        RAnkle = RKnee + shank_dir * p["lower_leg"]
-
-        LHeel = LAnkle + _vec(0.0, -p["foot_length"] * 0.25, -p["foot_length"] * 0.3)
-        RHeel = RAnkle + _vec(0.0, -p["foot_length"] * 0.25, -p["foot_length"] * 0.3)
-        LFootIdx = LAnkle + _vec(0.0, -p["foot_length"] * 0.05,  p["foot_length"] * 0.5)
-        RFootIdx = RAnkle + _vec(0.0, -p["foot_length"] * 0.05,  p["foot_length"] * 0.5)
-
-        pts = [
-            nose, le_i, le, le_o, re_i, re, re_o, lear, rear, ml, mr,
-            LShoulder, RShoulder, LElbow, RElbow, LWrist, RWrist,
-            LPinky, RPinky, LIndex, RIndex, LThumb, RThumb,
-            LHip, RHip, LKnee, RKnee, LAnkle, RAnkle,
-            LHeel, RHeel, LFootIdx, RFootIdx,
-        ]
-
-        frame_data = {"frame": f}
-        for i, name in enumerate(LANDMARK_NAMES):
-            pt = pts[i]
-            frame_data[f"{name}_x"] = round(float(pt[0]), 6)
-            frame_data[f"{name}_y"] = round(float(pt[1]), 6)
-            frame_data[f"{name}_z"] = round(float(pt[2]), 6)
-        sequence.append(frame_data)
-
-    return sequence
+    """关键帧标准硬拉：髋主导，上背稳定，杠铃路径贴近小腿."""
+    setup = _pose_from_major_points({
+        "left_shoulder": (0.18, -0.38, 0.14),
+        "right_shoulder": (-0.18, -0.38, 0.14),
+        "left_elbow": (0.20, -0.10, 0.12),
+        "right_elbow": (-0.20, -0.10, 0.12),
+        "left_wrist": (0.22, 0.18, 0.10),
+        "right_wrist": (-0.22, 0.18, 0.10),
+        "left_hip": (0.13, 0.0, -0.02),
+        "right_hip": (-0.13, 0.0, -0.02),
+        "left_knee": (0.16, 0.34, 0.03),
+        "right_knee": (-0.16, 0.34, 0.03),
+        "left_ankle": (0.14, 0.68, 0.02),
+        "right_ankle": (-0.14, 0.68, 0.02),
+    })
+    lockout = _pose_from_major_points({
+        "left_shoulder": (0.18, -0.55, 0.08),
+        "right_shoulder": (-0.18, -0.55, 0.08),
+        "left_elbow": (0.20, -0.25, 0.07),
+        "right_elbow": (-0.20, -0.25, 0.07),
+        "left_wrist": (0.22, 0.02, 0.06),
+        "right_wrist": (-0.22, 0.02, 0.06),
+        "left_hip": (0.13, 0.0, -0.02),
+        "right_hip": (-0.13, 0.0, -0.02),
+        "left_knee": (0.13, 0.40, 0.00),
+        "right_knee": (-0.13, 0.40, 0.00),
+        "left_ankle": (0.13, 0.73, 0.00),
+        "right_ankle": (-0.13, 0.73, 0.00),
+    })
+    hinge = _pose_from_major_points({
+        "left_shoulder": (0.18, -0.44, 0.12),
+        "right_shoulder": (-0.18, -0.44, 0.12),
+        "left_elbow": (0.20, -0.16, 0.10),
+        "right_elbow": (-0.20, -0.16, 0.10),
+        "left_wrist": (0.22, 0.10, 0.08),
+        "right_wrist": (-0.22, 0.10, 0.08),
+        "left_hip": (0.13, 0.0, -0.02),
+        "right_hip": (-0.13, 0.0, -0.02),
+        "left_knee": (0.15, 0.37, 0.02),
+        "right_knee": (-0.15, 0.37, 0.02),
+        "left_ankle": (0.13, 0.71, 0.01),
+        "right_ankle": (-0.13, 0.71, 0.01),
+    })
+    return _sequence_from_keyposes(
+        [(0.0, setup), (0.46, lockout), (0.58, lockout), (0.82, hinge), (1.0, setup)],
+        num_frames,
+    )
 
 
 def _build_pullup_landmarks(num_frames: int = 90) -> list[dict]:
@@ -436,82 +410,22 @@ def _build_pullup_landmarks(num_frames: int = 90) -> list[dict]:
 
 
 def _build_plank_landmarks(num_frames: int = 90) -> list[dict]:
-    """正向运动学构建标准平板支撑的 33 关键点.
-
-    核心关节角度:
-      - 身体保持直线 (肩-髋-膝-踝对齐)
-      - 肘部90°, 支撑于肩正下方
-    """
-    t = np.linspace(0, 1, num_frames)
-    p = BODY_PROPS
-
-    sequence = []
-    plank_height = 0.12
-    shoulder_y = plank_height + 0.14
-
-    for f in range(num_frames):
-        pelvis = _vec(0.0, plank_height, 0.0)
-        spine_top = _vec(0.0, shoulder_y, 0.0)
-        neck = spine_top + _vec(0.0, p["neck_length"] * 0.7, p["neck_length"] * 0.5)
-        head_center = neck + _vec(0.0, p["head_radius"] * 0.8, p["head_radius"] * 0.8)
-        nose = head_center + _vec(0.0, p["head_radius"] * 0.7, p["head_radius"] * 0.5)
-
-        le = head_center + _vec( p["head_radius"] * 0.3, p["head_radius"] * 0.5, p["head_radius"] * 0.6)
-        re = head_center + _vec(-p["head_radius"] * 0.3, p["head_radius"] * 0.5, p["head_radius"] * 0.6)
-        le_i = head_center + _vec( p["head_radius"] * 0.1, p["head_radius"] * 0.5, p["head_radius"] * 0.6)
-        re_i = head_center + _vec(-p["head_radius"] * 0.1, p["head_radius"] * 0.5, p["head_radius"] * 0.6)
-        le_o = head_center + _vec( p["head_radius"] * 0.5, p["head_radius"] * 0.5, p["head_radius"] * 0.5)
-        re_o = head_center + _vec(-p["head_radius"] * 0.5, p["head_radius"] * 0.5, p["head_radius"] * 0.5)
-        lear = head_center + _vec( p["head_radius"] * 0.8, p["head_radius"] * 0.2, 0.0)
-        rear = head_center + _vec(-p["head_radius"] * 0.8, p["head_radius"] * 0.2, 0.0)
-        ml = head_center + _vec( p["head_radius"] * 0.2, p["head_radius"] * 0.3, p["head_radius"] * 0.7)
-        mr = head_center + _vec(-p["head_radius"] * 0.2, p["head_radius"] * 0.3, p["head_radius"] * 0.7)
-
-        half_sw = p["shoulder_width"] / 2.0
-        LShoulder = _vec( half_sw, shoulder_y, 0.0)
-        RShoulder = _vec(-half_sw, shoulder_y, 0.0)
-
-        LElbow = LShoulder + _vec(0.0, -p["upper_arm"] * 0.6, -p["upper_arm"] * 0.4)
-        RElbow = RShoulder + _vec(0.0, -p["upper_arm"] * 0.6, -p["upper_arm"] * 0.4)
-        LWrist = LElbow + _vec(0.0, -p["lower_arm"] * 0.3, p["lower_arm"] * 0.5)
-        RWrist = RElbow + _vec(0.0, -p["lower_arm"] * 0.3, p["lower_arm"] * 0.5)
-        LPinky = LWrist + _vec( 0.03, 0.02, -0.02)
-        RPinky = RWrist + _vec(-0.03, 0.02, -0.02)
-        LIndex = LWrist + _vec( 0.0, 0.0, -0.04)
-        RIndex = RWrist + _vec( 0.0, 0.0, -0.04)
-        LThumb = LWrist + _vec(-0.03, 0.0, -0.02)
-        RThumb = RWrist + _vec( 0.03, 0.0, -0.02)
-
-        half_hw = p["hip_width"] / 2.0
-        LHip = _vec( half_hw, plank_height + 0.02, -0.02)
-        RHip = _vec(-half_hw, plank_height + 0.02, -0.02)
-
-        LKnee = LHip + _vec(0.0, -p["upper_leg"], 0.0)
-        RKnee = RHip + _vec(0.0, -p["upper_leg"], 0.0)
-        LAnkle = LKnee + _vec(0.0, -p["lower_leg"], 0.0)
-        RAnkle = RKnee + _vec(0.0, -p["lower_leg"], 0.0)
-        LHeel = LAnkle + _vec(0.0, 0.0, -p["foot_length"] * 0.3)
-        RHeel = RAnkle + _vec(0.0, 0.0, -p["foot_length"] * 0.3)
-        LFootIdx = LAnkle + _vec(0.0, -p["foot_length"] * 0.05, p["foot_length"] * 0.3)
-        RFootIdx = RAnkle + _vec(0.0, -p["foot_length"] * 0.05, p["foot_length"] * 0.3)
-
-        pts = [
-            nose, le_i, le, le_o, re_i, re, re_o, lear, rear, ml, mr,
-            LShoulder, RShoulder, LElbow, RElbow, LWrist, RWrist,
-            LPinky, RPinky, LIndex, RIndex, LThumb, RThumb,
-            LHip, RHip, LKnee, RKnee, LAnkle, RAnkle,
-            LHeel, RHeel, LFootIdx, RFootIdx,
-        ]
-
-        frame_data = {"frame": f}
-        for i, name in enumerate(LANDMARK_NAMES):
-            pt = pts[i]
-            frame_data[f"{name}_x"] = round(float(pt[0]), 6)
-            frame_data[f"{name}_y"] = round(float(pt[1]), 6)
-            frame_data[f"{name}_z"] = round(float(pt[2]), 6)
-        sequence.append(frame_data)
-
-    return sequence
+    """关键帧标准平板支撑：四肢撑地、身体卧倒、静止保持."""
+    hold = _pose_from_major_points({
+        "left_shoulder": (0.18, -0.13, 0.30),
+        "right_shoulder": (-0.18, -0.13, 0.30),
+        "left_elbow": (0.24, 0.07, 0.24),
+        "right_elbow": (-0.24, 0.07, 0.24),
+        "left_wrist": (0.24, 0.08, 0.10),
+        "right_wrist": (-0.24, 0.08, 0.10),
+        "left_hip": (0.13, -0.12, -0.02),
+        "right_hip": (-0.13, -0.12, -0.02),
+        "left_knee": (0.12, -0.03, -0.30),
+        "right_knee": (-0.12, -0.03, -0.30),
+        "left_ankle": (0.10, 0.08, -0.58),
+        "right_ankle": (-0.10, 0.08, -0.58),
+    })
+    return _sequence_from_keyposes([(0.0, hold), (1.0, hold)], num_frames)
 
 
 def _build_shooting_landmarks(num_frames: int = 90) -> list[dict]:
@@ -675,7 +589,7 @@ def _convert_fk_to_world_space(sequence: list[dict]) -> list[dict]:
 
 
 # 已是 MediaPipe world 坐标的关键帧模板，无需 FK 转换
-WORLD_SPACE_MOVEMENTS = {"squat"}
+WORLD_SPACE_MOVEMENTS = {"squat", "pushup", "deadlift", "plank"}
 
 
 def generate_template(movement: str = "squat", output_dir: str = "templates") -> str:

@@ -178,7 +178,7 @@ def check_voice_and_history() -> bool:
         ok_tts = engine is not None
         print(f"  {OK} pyttsx3 可用")
     except Exception as e:
-        print(f"  {WARN} pyttsx3 不可用: {e}（exe 中可改用 edge-tts）")
+        print(f"  {WARN} pyttsx3 不可用: {e}")
 
     from scripts.score_history import record_score, load_history
 
@@ -226,7 +226,7 @@ def main():
 
     print(f"\n  通过: {passed}/{len(results)}")
     if passed == len(results):
-        print("  全部通过，可以打包 exe 或开始实时训练。")
+        print("  全部通过，可以开始实时训练。")
     else:
         print("  部分未通过，请根据上方提示修复后重试。")
     return 0 if passed == len(results) else 1
